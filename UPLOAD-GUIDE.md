@@ -1,0 +1,27 @@
+# Snack Vote 上傳說明
+
+## 上傳檔案
+
+將壓縮檔解壓縮後，把資料夾內的所有檔案與資料夾上傳到 GitHub repository 根目錄。不要只上傳壓縮檔。
+
+## 設定 GitHub Variables
+
+進入 repository：`Settings` → `Secrets and variables` → `Actions` → `Variables`，建立：
+
+- `VITE_SUPABASE_URL`：Supabase Project URL
+- `VITE_SUPABASE_PUBLISHABLE_KEY`：`sb_publishable_...` 開頭的 Publishable Key
+
+Publishable Key 可以供瀏覽器使用；請勿放入 Secret、Service Role、資料庫密碼或 SMTP 密碼。
+
+## 開啟 GitHub Pages
+
+進入 `Settings` → `Pages`，將 Source 設為 `GitHub Actions`。上傳至 `main` 後，Actions 會自動建置並發布。
+
+## 設定 Supabase 登入網址
+
+發布成功取得 GitHub Pages 網址後，進入 Supabase：`Authentication` → `URL Configuration`：
+
+- Site URL：填入 GitHub Pages 網址
+- Redirect URLs：加入相同網址，結尾可使用 `/**`
+
+`supabase/schema.sql` 是完整資料庫結構備份。若已在 Supabase SQL Editor 執行成功，不需要重複執行。
