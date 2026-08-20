@@ -22,12 +22,19 @@ export default function App(){
   const [employee,setEmployee]=useState<Employee|null>(null);
   const [loading,setLoading]=useState(true);
   const [denied,setDenied]=useState(false);
+  const [route,setRoute]=useState(()=>location.hash||"#/");
 
   useEffect(()=>{
     if(!isSupabaseConfigured){setLoading(false);return}
     supabase.auth.getSession().then(({data})=>setSession(data.session));
     const {data}=supabase.auth.onAuthStateChange((_event,next)=>setSession(next));
     return()=>data.subscription.unsubscribe();
+  },[]);
+
+  useEffect(()=>{
+    const handleRouteChange=()=>setRoute(location.hash||"#/");
+    window.addEventListener("hashchange",handleRouteChange);
+    return()=>window.removeEventListener("hashchange",handleRouteChange);
   },[]);
 
   useEffect(()=>{
@@ -41,7 +48,7 @@ export default function App(){
   if(loading)return <main className="loading-screen">正在確認公司名單…</main>;
   if(!session)return <Login/>;
   if(denied||!employee)return <Unauthorized email={session.user.email??""}/>;
-  const adminRoute=location.hash.startsWith("#/admin");
+  const adminRoute=route.startsWith("#/admin");
   if(adminRoute&&employee.role!=="admin")return <Unauthorized email={employee.email} adminOnly/>;
   return adminRoute?<AdminApp employee={employee}/>:<EmployeeApp employee={employee}/>;
 }
