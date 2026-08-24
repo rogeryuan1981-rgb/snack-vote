@@ -1,21 +1,7 @@
--- Snack Vote 增量升級：每期基本預算與上期餘額結轉
+-- Snack Vote 增量升級：分離「本期留錢」與「本期使用上期留款」
 
-alter table public.campaigns add column if not exists base_budget numeric(12,2);
-alter table public.campaigns add column if not exists carryover_enabled boolean not null default false;
-alter table public.campaigns add column if not exists retain_unused_budget boolean not null default false;
-alter table public.campaigns add column if not exists carryover_amount numeric(12,2) not null default 0;
-alter table public.campaigns add column if not exists carryover_from uuid references public.campaigns(id) on delete set null;
-
-update public.campaigns set base_budget = budget where base_budget is null;
-alter table public.campaigns alter column base_budget set not null;
-
-alter table public.campaigns drop constraint if exists campaigns_base_budget_nonnegative;
-alter table public.campaigns add constraint campaigns_base_budget_nonnegative check (base_budget >= 0);
-alter table public.campaigns drop constraint if exists campaigns_carryover_nonnegative;
-alter table public.campaigns add constraint campaigns_carryover_nonnegative check (carryover_amount >= 0);
-alter table public.campaigns drop constraint if exists campaigns_budget_breakdown_matches;
-alter table public.campaigns add constraint campaigns_budget_breakdown_matches
-check (budget = base_budget + carryover_amount);
+alter table public.campaigns
+add column if not exists retain_unused_budget boolean not null default false;
 
 create or replace function public.calculate_campaign_carryover(
   p_start_at timestamptz,
@@ -44,3 +30,4 @@ end;
 $$;
 
 grant execute on function public.calculate_campaign_carryover(timestamptz, uuid) to authenticated;
+

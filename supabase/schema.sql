@@ -37,6 +37,7 @@ create table if not exists public.campaigns (
   budget numeric(12, 2) not null check (budget >= 0),
   base_budget numeric(12, 2) not null check (base_budget >= 0),
   carryover_enabled boolean not null default false,
+  retain_unused_budget boolean not null default false,
   carryover_amount numeric(12, 2) not null default 0 check (carryover_amount >= 0),
   carryover_from uuid references public.campaigns(id) on delete set null,
   nomination_limit integer not null default 2 check (nomination_limit > 0),
@@ -338,11 +339,14 @@ begin
   select * into previous_campaign from public.campaigns
   where start_at < p_start_at and (p_exclude_campaign_id is null or id <> p_exclude_campaign_id)
   order by start_at desc limit 1;
-  if not found then return jsonb_build_object('campaign_id',null,'label',null,'remaining',0); end if;
+  if not found then return jsonb_build_object('campaign_id',null,'label',null,'remaining',0,'retained',false); end if;
+  if not previous_campaign.retain_unused_budget then
+    return jsonb_build_object('campaign_id',previous_campaign.id,'label',previous_campaign.label,'remaining',0,'retained',false);
+  end if;
   select coalesce(sum(unit_price * coalesce(final_quantity,suggested_quantity)),0) into spent
   from public.purchase_items where campaign_id = previous_campaign.id;
   remaining := greatest(previous_campaign.budget - spent,0);
-  return jsonb_build_object('campaign_id',previous_campaign.id,'label',previous_campaign.label,'budget',previous_campaign.budget,'spent',spent,'remaining',remaining);
+  return jsonb_build_object('campaign_id',previous_campaign.id,'label',previous_campaign.label,'budget',previous_campaign.budget,'spent',spent,'remaining',remaining,'retained',true);
 end;
 $$;
 
