@@ -72,6 +72,7 @@ create table if not exists public.products (
   size text not null default '',
   reference_price numeric(10, 2) check (reference_price is null or reference_price >= 0),
   source_url text,
+  image_path text,
   origin text not null default 'catalog' check (origin in ('catalog', 'employee')),
   approval_status text not null default 'approved'
     check (approval_status in ('pending', 'approved', 'rejected')),
