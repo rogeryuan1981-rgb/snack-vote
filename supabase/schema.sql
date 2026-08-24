@@ -35,6 +35,10 @@ create table if not exists public.campaigns (
   label text not null check (length(btrim(label)) between 1 and 100),
   timezone text not null default 'Asia/Taipei',
   budget numeric(12, 2) not null check (budget >= 0),
+  base_budget numeric(12, 2) not null check (base_budget >= 0),
+  carryover_enabled boolean not null default false,
+  carryover_amount numeric(12, 2) not null default 0 check (carryover_amount >= 0),
+  carryover_from uuid references public.campaigns(id) on delete set null,
   nomination_limit integer not null default 2 check (nomination_limit > 0),
   vote_limit integer not null default 4 check (vote_limit > 0),
   start_at timestamptz not null,
@@ -51,6 +55,7 @@ create table if not exists public.campaigns (
     and voting_deadline <= purchase_at
   ),
   constraint campaigns_limits_order check (vote_limit >= nomination_limit)
+  ,constraint campaigns_budget_breakdown_matches check (budget = base_budget + carryover_amount)
 );
 
 create table if not exists public.campaign_members (
@@ -63,6 +68,23 @@ create table if not exists public.campaign_members (
   created_at timestamptz not null default now(),
   unique (campaign_id, employee_id)
 );
+
+create table if not exists public.product_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (length(btrim(name)) between 1 and 80),
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists product_categories_name_unique
+on public.product_categories (lower(btrim(name)));
+
+insert into public.product_categories (name, sort_order)
+values
+  ('洋芋片', 10), ('餅乾', 20), ('巧克力', 30), ('糖果果凍', 40),
+  ('米果', 50), ('堅果果乾', 60), ('海苔肉乾', 70), ('飲料', 80)
+on conflict do nothing;
 
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
@@ -78,6 +100,7 @@ create table if not exists public.products (
     check (approval_status in ('pending', 'approved', 'rejected')),
   created_by uuid references public.employees(id) on delete set null,
   active boolean not null default true,
+  deleted_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -236,6 +259,94 @@ $$;
 grant execute on function public.current_employee_id() to authenticated;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.is_campaign_member(uuid) to authenticated;
+
+create or replace function public.validate_product_category()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.category := btrim(new.category);
+  if new.deleted_at is null and not exists (
+    select 1 from public.product_categories c where c.name = new.category
+  ) then raise exception 'CATEGORY_NOT_FOUND'; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists products_validate_category on public.products;
+create trigger products_validate_category
+before insert or update of category, deleted_at on public.products
+for each row execute function public.validate_product_category();
+
+create or replace function public.rename_product_category(p_category_id uuid, p_new_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare old_name text; clean_name text := btrim(p_new_name);
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  if length(clean_name) < 1 or length(clean_name) > 80 then raise exception 'INVALID_CATEGORY_NAME'; end if;
+  select name into old_name from public.product_categories where id = p_category_id for update;
+  if not found then raise exception 'CATEGORY_NOT_FOUND'; end if;
+  if exists (select 1 from public.product_categories where id <> p_category_id and lower(btrim(name)) = lower(clean_name)) then raise exception 'CATEGORY_ALREADY_EXISTS'; end if;
+  update public.product_categories set name = clean_name, updated_at = now() where id = p_category_id;
+  update public.products set category = clean_name where category = old_name;
+end;
+$$;
+
+grant execute on function public.rename_product_category(uuid, text) to authenticated;
+
+create or replace function public.delete_product_category(p_category_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare category_name text; current_campaign_id uuid; removed_count integer := 0;
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  select name into category_name from public.product_categories where id = p_category_id for update;
+  if not found then raise exception 'CATEGORY_NOT_FOUND'; end if;
+  select id into current_campaign_id from public.campaigns where status = 'active' order by start_at desc limit 1;
+  if current_campaign_id is not null and exists (
+    select 1 from public.products p
+    where p.category = category_name and p.deleted_at is null
+      and (exists (select 1 from public.nominations n where n.campaign_id = current_campaign_id and n.product_id = p.id)
+        or exists (select 1 from public.votes v where v.campaign_id = current_campaign_id and v.product_id = p.id))
+  ) then raise exception 'CATEGORY_IN_USE_CURRENT_CAMPAIGN'; end if;
+  select count(*)::integer into removed_count from public.products where category = category_name and deleted_at is null;
+  update public.products set active = false, deleted_at = now(), updated_at = now() where category = category_name and deleted_at is null;
+  delete from public.product_categories where id = p_category_id;
+  return removed_count;
+end;
+$$;
+
+grant execute on function public.delete_product_category(uuid) to authenticated;
+
+create or replace function public.calculate_campaign_carryover(p_start_at timestamptz, p_exclude_campaign_id uuid default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare previous_campaign public.campaigns%rowtype; spent numeric(12,2) := 0; remaining numeric(12,2) := 0;
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  select * into previous_campaign from public.campaigns
+  where start_at < p_start_at and (p_exclude_campaign_id is null or id <> p_exclude_campaign_id)
+  order by start_at desc limit 1;
+  if not found then return jsonb_build_object('campaign_id',null,'label',null,'remaining',0); end if;
+  select coalesce(sum(unit_price * coalesce(final_quantity,suggested_quantity)),0) into spent
+  from public.purchase_items where campaign_id = previous_campaign.id;
+  remaining := greatest(previous_campaign.budget - spent,0);
+  return jsonb_build_object('campaign_id',previous_campaign.id,'label',previous_campaign.label,'budget',previous_campaign.budget,'spent',spent,'remaining',remaining);
+end;
+$$;
+
+grant execute on function public.calculate_campaign_carryover(timestamptz, uuid) to authenticated;
 
 create or replace function public.link_employee_to_auth_user()
 returns trigger
@@ -632,6 +743,7 @@ grant select on public.campaign_nomination_totals to authenticated;
 alter table public.employees enable row level security;
 alter table public.campaigns enable row level security;
 alter table public.campaign_members enable row level security;
+alter table public.product_categories enable row level security;
 alter table public.products enable row level security;
 alter table public.nominations enable row level security;
 alter table public.votes enable row level security;
@@ -666,6 +778,13 @@ create policy campaign_members_select on public.campaign_members for select to a
 using (public.is_admin() or employee_id = public.current_employee_id());
 drop policy if exists campaign_members_admin_all on public.campaign_members;
 create policy campaign_members_admin_all on public.campaign_members for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists product_categories_select on public.product_categories;
+create policy product_categories_select on public.product_categories for select to authenticated
+using (true);
+drop policy if exists product_categories_admin_all on public.product_categories;
+create policy product_categories_admin_all on public.product_categories for all to authenticated
 using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists products_select on public.products;
@@ -744,10 +863,10 @@ using (public.is_admin());
 revoke all on public.audit_logs from anon, authenticated;
 grant select on public.audit_logs to authenticated;
 grant select on public.employees, public.campaigns, public.campaign_members,
-  public.products, public.nominations, public.votes, public.comments,
+  public.product_categories, public.products, public.nominations, public.votes, public.comments,
   public.purchase_items, public.email_deliveries to authenticated;
 grant insert, update, delete on public.employees, public.campaigns, public.campaign_members,
-  public.products, public.nominations, public.votes, public.comments,
+  public.product_categories, public.products, public.nominations, public.votes, public.comments,
   public.purchase_items, public.email_deliveries to authenticated;
 grant usage, select on all sequences in schema public to authenticated;
 
