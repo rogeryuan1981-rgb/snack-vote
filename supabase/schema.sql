@@ -273,6 +273,16 @@ grant execute on function public.current_employee_id() to authenticated;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.is_campaign_member(uuid) to authenticated;
 
+create or replace function public.is_login_email_allowed(p_email text)
+returns boolean language sql stable security definer set search_path=public as $$
+  select exists (
+    select 1 from public.employees e
+    where e.active and lower(e.email::text)=lower(btrim(p_email))
+  );
+$$;
+revoke all on function public.is_login_email_allowed(text) from public;
+grant execute on function public.is_login_email_allowed(text) to anon,authenticated;
+
 create or replace function public.validate_product_category()
 returns trigger
 language plpgsql

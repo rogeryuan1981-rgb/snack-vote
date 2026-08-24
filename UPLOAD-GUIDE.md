@@ -48,6 +48,35 @@
 
 完成後，管理者可在「歷史紀錄」展開活動並使用「強制刪除活動」。系統會進行兩次確認，並永久刪除該活動的參與名單、提名、投票、留言、採購項目及寄信紀錄；商品與員工名單不會被刪除。
 
+## 本次必做：登入安全與員工名單預先驗證
+
+先在 Supabase `SQL Editor` 完整執行：
+
+`supabase/upgrade-20260824-login-security.sql`
+
+完成後，登入頁會在寄信前確認 Email 是否屬於啟用員工；不在名單或已停用的 Email 不會寄出登入信。
+
+### 啟用「要求重新登入」功能
+
+管理後台現在可撤銷指定員工在所有裝置上的登入工作階段。這項操作必須由 Supabase Edge Function 安全執行，不能把管理金鑰放進 GitHub Pages。
+
+請在 Supabase 專案的 `Edge Functions` 建立並部署名稱為：
+
+`revoke-user-session`
+
+程式內容使用壓縮檔中的：
+
+`supabase/functions/revoke-user-session/index.ts`
+
+Supabase 會自動提供該函式需要的 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 與 `SUPABASE_SERVICE_ROLE_KEY`，不要把 Service Role Key 加到 GitHub Variables。部署一次後，員工名單中的「要求重新登入」按鈕即可使用。
+
+## 本版工作階段與文字顯示
+
+- 登入頁可選「共用電腦」；開啟後，關閉該瀏覽器分頁即清除登入。
+- 所有登入工作階段閒置 30 分鐘會自動登出。
+- 員工頁及後台會顯示目前工作階段模式、姓名與 Email。
+- 全站預設字級已提高，並提供「一般／放大」文字切換；選擇會保存在該瀏覽器。
+
 ## 上傳檔案
 
 將壓縮檔解壓縮後，把資料夾內的所有檔案與資料夾上傳到 GitHub repository 根目錄。遇到同名檔案請覆蓋；不要只上傳壓縮檔。
