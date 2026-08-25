@@ -78,6 +78,14 @@ Supabase 會自動提供該函式需要的 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 
 
 完成 Supabase Email Template 設定。若只上傳程式而未修改信件範本，信件可能仍顯示舊的登入連結，而不是數字驗證碼。
 
+## 本次必做：活動說明與商品新增者
+
+在 Supabase `SQL Editor` 完整執行：
+
+`supabase/upgrade-20260825-campaign-description-and-product-submitter.sql`
+
+這會替活動加入「活動說明」欄位；管理者可在活動設定中編輯，員工首頁會醒目呈現。員工新增商品原本就會保存送出者，本次審核畫面會直接顯示姓名；升級檔也會依最早提名紀錄，盡可能回填舊的員工自建商品。這份增量檔可安全重複執行。
+
 ## 本版工作階段與文字顯示
 
 - 登入頁可選「共用電腦」；開啟後，關閉該瀏覽器分頁即清除登入。

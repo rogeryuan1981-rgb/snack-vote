@@ -44,6 +44,7 @@ create table if not exists public.employees (
 create table if not exists public.campaigns (
   id uuid primary key default gen_random_uuid(),
   label text not null check (length(btrim(label)) between 1 and 100),
+  description text not null default '' check (char_length(description) <= 1000),
   timezone text not null default 'Asia/Taipei',
   budget numeric(12, 2) not null check (budget >= 0),
   base_budget numeric(12, 2) not null check (base_budget >= 0),

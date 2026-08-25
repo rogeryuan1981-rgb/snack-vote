@@ -7,6 +7,7 @@ import "../app/timeline.css";
 import "../app/admin/admin.css";
 import "../app/admin/status.css";
 import "./supabase.css";
+import "./campaign-enhancements.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
