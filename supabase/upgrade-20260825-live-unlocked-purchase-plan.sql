@@ -1,95 +1,35 @@
--- Stable purchase editing, price-preserving recalculation, and purchase-plan locking.
+-- Keep an existing, unlocked purchase-plan draft synchronized with vote changes.
 -- Safe to run more than once in Supabase SQL Editor.
-
-alter table public.campaigns
-  add column if not exists purchase_plan_locked_at timestamptz;
-
-alter table public.campaigns
-  add column if not exists purchase_plan_locked_by uuid
-  references public.employees(id) on delete set null;
-
-alter table public.campaigns
-  add column if not exists purchase_expected_arrival_date date;
 
 alter table public.campaigns
   add column if not exists purchase_plan_generated_at timestamptz;
 
-create or replace function public.set_purchase_plan_lock(
-  p_campaign_id uuid,
-  p_locked boolean
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'purchase_items'
+  ) then
+    alter publication supabase_realtime add table public.purchase_items;
+  end if;
+end;
+$$;
+
+-- Existing purchase plans predate the explicit draft marker. Mark them as generated
+-- so future vote changes keep them synchronized even if recalculation makes them empty.
+update public.campaigns c
+set purchase_plan_generated_at = coalesce(
+  c.purchase_plan_generated_at,
+  (select min(pi.created_at) from public.purchase_items pi where pi.campaign_id = c.id),
+  now()
 )
-returns timestamptz
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  locked_time timestamptz;
-begin
-  if not public.is_admin() then
-    raise exception 'ADMIN_REQUIRED';
-  end if;
-
-  if p_locked and not exists (
-    select 1 from public.purchase_items where campaign_id = p_campaign_id
-  ) then
-    raise exception 'PURCHASE_PLAN_EMPTY';
-  end if;
-
-  locked_time := case when p_locked then now() else null end;
-
-  update public.campaigns
-  set purchase_plan_locked_at = locked_time,
-      purchase_plan_locked_by = case when p_locked then public.current_employee_id() else null end
-  where id = p_campaign_id;
-
-  if not found then raise exception 'CAMPAIGN_NOT_FOUND'; end if;
-  return locked_time;
-end;
-$$;
-
-grant execute on function public.set_purchase_plan_lock(uuid, boolean) to authenticated;
-
-create or replace function public.protect_locked_purchase_plan()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  target_campaign_id uuid;
-begin
-  target_campaign_id := new.campaign_id;
-
-  if exists (
-    select 1 from public.campaigns
-    where id = target_campaign_id
-      and purchase_plan_locked_at is not null
-  ) then
-    if tg_op = 'INSERT' then
-      raise exception 'PURCHASE_PLAN_LOCKED';
-    end if;
-
-    if new.campaign_id is distinct from old.campaign_id
-      or new.product_id is distinct from old.product_id
-      or new.rank is distinct from old.rank
-      or new.vote_count is distinct from old.vote_count
-      or new.unit_price is distinct from old.unit_price
-      or new.suggested_quantity is distinct from old.suggested_quantity
-      or new.final_quantity is distinct from old.final_quantity
-    then
-      raise exception 'PURCHASE_PLAN_LOCKED';
-    end if;
-  end if;
-
-  return new;
-end;
-$$;
-
-drop trigger if exists purchase_items_protect_locked_plan on public.purchase_items;
-create trigger purchase_items_protect_locked_plan
-before insert or update on public.purchase_items
-for each row execute function public.protect_locked_purchase_plan();
+where c.purchase_plan_generated_at is null
+  and exists (
+    select 1 from public.purchase_items pi where pi.campaign_id = c.id
+  );
 
 create or replace function public.generate_purchase_plan(p_campaign_id uuid)
 returns jsonb
@@ -105,7 +45,11 @@ declare
   made_progress boolean;
   missing_prices integer;
 begin
-  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  -- Direct calls remain admin-only. Calls nested inside the protected vote trigger
+  -- are allowed so employee vote changes can refresh an existing draft.
+  if not public.is_admin() and pg_trigger_depth() = 0 then
+    raise exception 'ADMIN_REQUIRED';
+  end if;
 
   select budget into campaign_budget
   from public.campaigns
@@ -120,9 +64,12 @@ begin
     raise exception 'CAMPAIGN_NOT_FOUND';
   end if;
 
+  update public.campaigns
+  set purchase_plan_generated_at = coalesce(purchase_plan_generated_at, now())
+  where id = p_campaign_id;
+
   remaining := campaign_budget;
 
-  -- Remove products that are no longer ranked 1 through 5.
   with vote_counts as (
     select product_id, count(*)::integer as vote_count
     from public.votes
@@ -140,8 +87,7 @@ begin
       where ranked.product_id = pi.product_id and ranked.rank <= 5
     );
 
-  -- Existing rows retain their manually maintained unit_price.
-  -- Only newly ranked products start from the product reference price.
+  -- Existing products keep their manually maintained purchase price.
   insert into public.purchase_items (
     campaign_id, product_id, rank, vote_count, unit_price,
     suggested_quantity, final_quantity, purchased
@@ -224,5 +170,62 @@ end;
 $$;
 
 grant execute on function public.generate_purchase_plan(uuid) to authenticated;
+
+create or replace function public.sync_unlocked_purchase_plan_after_vote()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_campaign_id uuid;
+  previous_campaign_id uuid;
+begin
+  target_campaign_id := case when tg_op = 'DELETE' then old.campaign_id else new.campaign_id end;
+  previous_campaign_id := case when tg_op = 'UPDATE' then old.campaign_id else null end;
+
+  if exists (
+    select 1
+    from public.campaigns c
+    where c.id = target_campaign_id
+      and c.purchase_plan_locked_at is null
+      and c.purchase_plan_generated_at is not null
+  ) then
+    perform public.generate_purchase_plan(target_campaign_id);
+  end if;
+
+  if previous_campaign_id is not null
+    and previous_campaign_id is distinct from target_campaign_id
+    and exists (
+      select 1
+      from public.campaigns c
+      where c.id = previous_campaign_id
+        and c.purchase_plan_locked_at is null
+        and c.purchase_plan_generated_at is not null
+    )
+  then
+    perform public.generate_purchase_plan(previous_campaign_id);
+  end if;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists votes_sync_unlocked_purchase_plan on public.votes;
+drop trigger if exists votes_sync_unlocked_purchase_plan_insert on public.votes;
+drop trigger if exists votes_sync_unlocked_purchase_plan_update on public.votes;
+drop trigger if exists votes_sync_unlocked_purchase_plan_delete on public.votes;
+
+create trigger votes_sync_unlocked_purchase_plan_insert
+after insert on public.votes
+for each row execute function public.sync_unlocked_purchase_plan_after_vote();
+
+create trigger votes_sync_unlocked_purchase_plan_update
+after update of campaign_id, product_id on public.votes
+for each row execute function public.sync_unlocked_purchase_plan_after_vote();
+
+create trigger votes_sync_unlocked_purchase_plan_delete
+after delete on public.votes
+for each row execute function public.sync_unlocked_purchase_plan_after_vote();
 
 notify pgrst, 'reload schema';
