@@ -48,6 +48,8 @@ Supabase `Authentication` → `URL Configuration`：
 - Site URL：GitHub Pages 網址
 - Redirect URLs：相同網址，結尾可使用 `/**`
 
+Email Template 的返回按鈕必須使用 `{{ .RedirectTo }}`，不要使用 `{{ .SiteURL }}`。新版程式會在寄送驗證碼時帶入目前網站的完整 GitHub Pages 路徑，避免 repository 子路徑遺失而出現 404。
+
 ## 6. 要求員工重新登入（選用）
 
 若要使用後台「要求重新登入」，需在 Supabase Edge Functions 部署：

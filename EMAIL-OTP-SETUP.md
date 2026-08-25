@@ -12,18 +12,22 @@ Snack Vote 僅使用 Email OTP 登入，不需要 Microsoft Entra ID，也不需
 <h2>Snack Vote 登入驗證碼</h2>
 <p>請回到 Snack Vote，輸入以下登入驗證碼：</p>
 <p style="font-size:32px;font-weight:700;letter-spacing:8px">{{ .Token }}</p>
-<p>開啟 Snack Vote：<a href="{{ .SiteURL }}">{{ .SiteURL }}</a></p>
+<p><a href="{{ .RedirectTo }}" style="display:inline-block;padding:12px 20px;background:#164f3d;color:#fff;text-decoration:none;border-radius:8px">開啟 Snack Vote</a></p>
 <p>若不是你本人要求登入，請忽略此信。</p>
 ```
 
-4. 儲存後，用啟用員工名單中的 Email 測試。信件應顯示一次性數字驗證碼。
+`{{ .RedirectTo }}` 會使用 Snack Vote 寄信當下所在的完整網址，包含 GitHub Pages 的 `/snack-vote/` 子路徑；請勿改回 `{{ .SiteURL }}`，否則 Site URL 設定錯誤時可能開到 GitHub 404。
+
+4. 儲存後，用啟用員工名單中的 Email 測試。信件應顯示一次性數字驗證碼；「開啟 Snack Vote」只負責回到登入頁，仍需輸入驗證碼。
 
 ## 二、確認網站網址
 
 Supabase `Authentication` → `URL Configuration`：
 
 - Site URL：正式 GitHub Pages 網址。
-- Redirect URLs：加入正式網址，結尾可使用 `/**`。
+- Redirect URLs：加入正式網址，結尾可使用 `/**`，例如 `https://rogeryuan1981-rgb.github.io/snack-vote/**`。
+
+若網站日後更名或換 repository，只要新網址已加入 Redirect URLs，程式寄信時就會自動帶入新網址，不需要再改 Email Template。
 
 ## 三、安全規則
 
