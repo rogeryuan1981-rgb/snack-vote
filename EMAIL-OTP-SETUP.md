@@ -1,6 +1,6 @@
-# Email 六位數驗證碼設定
+# Email OTP 驗證碼設定
 
-Snack Vote 僅使用 Email 六位數驗證碼登入，不需要 Microsoft Entra ID，也不需要員工設定密碼。
+Snack Vote 僅使用 Email OTP 登入，不需要 Microsoft Entra ID，也不需要員工設定密碼。Supabase 可將 Email OTP 設為 6～10 位數；前端會自動接受這個範圍，不需寫死長度。
 
 ## 一、設定 Supabase Email Template
 
@@ -10,13 +10,13 @@ Snack Vote 僅使用 Email 六位數驗證碼登入，不需要 Microsoft Entra 
 
 ```html
 <h2>Snack Vote 登入驗證碼</h2>
-<p>請回到 Snack Vote，輸入以下六位數驗證碼：</p>
+<p>請回到 Snack Vote，輸入以下登入驗證碼：</p>
 <p style="font-size:32px;font-weight:700;letter-spacing:8px">{{ .Token }}</p>
 <p>開啟 Snack Vote：<a href="{{ .SiteURL }}">{{ .SiteURL }}</a></p>
 <p>若不是你本人要求登入，請忽略此信。</p>
 ```
 
-4. 儲存後，用啟用員工名單中的 Email 測試。信件應顯示六位數字。
+4. 儲存後，用啟用員工名單中的 Email 測試。信件應顯示一次性數字驗證碼。
 
 ## 二、確認網站網址
 

@@ -102,12 +102,12 @@ function Login(){
     setBusy(false);
     if(error)return showError(error.message.includes("rate limit")?"驗證碼寄送次數過於頻繁，請稍後再試。":error.message);
     setEmail(normalized);setToken("");setStep("otp");setResendIn(60);
-    setMessage("六位數驗證碼已寄出，請查看信箱。");
+    setMessage("登入驗證碼已寄出，請查看信箱。");
   }
 
   async function verify(e:FormEvent){
     e.preventDefault();
-    if(!/^\d{6}$/.test(token))return showError("請輸入信件中的六位數驗證碼。");
+    if(!/^\d{6,10}$/.test(token))return showError("請輸入信件中的 6～10 位數字驗證碼。");
     setBusy(true);setMessage("");setError(false);applySessionMode();
     const {error}=await supabase.auth.verifyOtp({email:email.trim().toLowerCase(),token,type:"email"});
     setBusy(false);
@@ -128,17 +128,17 @@ function Login(){
         <p className="section-kicker">EMPLOYEE SIGN IN</p>
         {step==="email"&&<form onSubmit={sendOtp}>
           <h2>使用公司 Email 登入</h2>
-          <p>不需要密碼。輸入員工名單中的 Email，我們會寄送六位數驗證碼。</p>
+          <p>不需要密碼。輸入員工名單中的 Email，我們會寄送一次性登入驗證碼。</p>
           <label>Email<input type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@company.com" autoFocus/></label>
           {deviceControl}
-          <button className="auth-submit" disabled={busy}>{busy?"寄送中…":"寄送六位數驗證碼"}</button>
+          <button className="auth-submit" disabled={busy}>{busy?"寄送中…":"寄送登入驗證碼"}</button>
         </form>}
         {step==="otp"&&<form onSubmit={verify}>
           <button type="button" className="auth-back" onClick={()=>{setStep("email");setToken("");setMessage("");setError(false)}}>← 修改 Email</button>
           <h2>輸入驗證碼</h2>
           <p>驗證碼已寄到 <strong>{email}</strong>。請在有效時間內完成登入。</p>
-          <label>六位數驗證碼<input className="otp-input" type="text" required inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" value={token} onChange={e=>setToken(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="000000" autoFocus/></label>
-          <button className="auth-submit" disabled={busy||token.length!==6}>{busy?"驗證中…":"驗證並登入"}</button>
+          <label>登入驗證碼<input className="otp-input" type="text" required inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={10} pattern="[0-9]{6,10}" value={token} onChange={e=>setToken(e.target.value.replace(/\D/g,"").slice(0,10))} placeholder="00000000" autoFocus/></label>
+          <button className="auth-submit" disabled={busy||token.length<6}>{busy?"驗證中…":"驗證並登入"}</button>
           <button type="button" className="resend-code" disabled={busy||resendIn>0} onClick={()=>void sendOtp()}>{resendIn>0?`${resendIn} 秒後可重新寄送`:"重新寄送驗證碼"}</button>
         </form>}
         {message&&<p className={`auth-message ${error?"error":""}`}>{message}</p>}

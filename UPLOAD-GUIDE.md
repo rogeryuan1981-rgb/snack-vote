@@ -70,13 +70,13 @@
 
 Supabase 會自動提供該函式需要的 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 與 `SUPABASE_SERVICE_ROLE_KEY`，不要把 Service Role Key 加到 GitHub Variables。部署一次後，員工名單中的「要求重新登入」按鈕即可使用。
 
-## 本次必做：Email 六位數驗證碼
+## 本次必做：Email OTP 驗證碼
 
-本版僅保留 Email 六位數驗證碼登入，不使用 Microsoft Entra ID。請依照：
+本版僅保留 Email OTP 驗證碼登入，不使用 Microsoft Entra ID。前端支援 Supabase 可設定的 6～10 位數驗證碼。請依照：
 
 `EMAIL-OTP-SETUP.md`
 
-完成 Supabase Email Template 設定。若只上傳程式而未修改信件範本，信件可能仍顯示舊的登入連結，而不是六位數驗證碼。
+完成 Supabase Email Template 設定。若只上傳程式而未修改信件範本，信件可能仍顯示舊的登入連結，而不是數字驗證碼。
 
 ## 本版工作階段與文字顯示
 
