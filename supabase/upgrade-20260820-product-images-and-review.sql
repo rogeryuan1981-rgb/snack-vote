@@ -184,8 +184,8 @@ begin
     select
       v.product_id,
       count(*)::integer as vote_count,
-      row_number() over (
-        order by count(*) desc, min(v.created_at), v.product_id
+      rank() over (
+        order by count(*) desc
       )::integer as rank
     from public.votes v
     where v.campaign_id = p_campaign_id
@@ -193,13 +193,13 @@ begin
   ) ranked
   join public.products p on p.id = ranked.product_id
   where ranked.rank <= 5
-  order by ranked.rank;
+  order by ranked.rank, ranked.product_id;
 
   -- 第一輪：依名次先讓每個品項最多取得 2 份。
   for item in
     select * from public.purchase_items
     where campaign_id = p_campaign_id
-    order by rank
+    order by rank, product_id
   loop
     if item.unit_price > 0 then
       buy_count := least(2, floor(remaining / item.unit_price)::integer);
@@ -218,7 +218,7 @@ begin
     for item in
       select * from public.purchase_items
       where campaign_id = p_campaign_id
-      order by rank
+      order by rank, product_id
     loop
       if item.unit_price > 0 and remaining >= item.unit_price then
         update public.purchase_items
