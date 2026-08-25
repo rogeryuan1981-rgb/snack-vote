@@ -51,7 +51,7 @@ export default function App(){
     return()=>window.removeEventListener("hashchange",handleRouteChange);
   },[]);
 
-  useEffect(()=>{if(!session)return;let timer=0;let lastReset=0;const signOutForIdle=()=>void supabase.auth.signOut();const reset=()=>{const now=Date.now();if(now-lastReset<15000)return;lastReset=now;window.clearTimeout(timer);timer=window.setTimeout(signOutForIdle,30*60*1000)};const events=["pointerdown","keydown","touchstart","scroll"] as const;events.forEach(event=>window.addEventListener(event,reset,{passive:true}));reset();return()=>{window.clearTimeout(timer);events.forEach(event=>window.removeEventListener(event,reset))}},[session?.user.id]);
+  useEffect(()=>{if(!session||getSessionMode()!=="shared")return;let timer=0;let lastReset=0;const signOutForIdle=()=>void supabase.auth.signOut();const reset=()=>{const now=Date.now();if(now-lastReset<15000)return;lastReset=now;window.clearTimeout(timer);timer=window.setTimeout(signOutForIdle,30*60*1000)};const events=["pointerdown","keydown","touchstart","scroll"] as const;events.forEach(event=>window.addEventListener(event,reset,{passive:true}));reset();return()=>{window.clearTimeout(timer);events.forEach(event=>window.removeEventListener(event,reset))}},[session?.user.id]);
 
   useEffect(()=>{
     if(!session){setEmployee(null);setDenied(false);setLoading(false);return}
@@ -72,9 +72,80 @@ export default function App(){
 function SetupScreen(){return <main className="system-card"><p className="section-kicker">連線設定</p><h1>網站程式已準備連接 Supabase</h1><p>請建立 <code>.env.local</code>，填入 Project URL 與 Publishable Key，再重新啟動網站。</p><code>VITE_SUPABASE_URL=...<br/>VITE_SUPABASE_PUBLISHABLE_KEY=...</code></main>}
 
 function Login(){
-  const [email,setEmail]=useState("");const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");const [error,setError]=useState(false);const [shared,setShared]=useState(()=>getSessionMode()==="shared");
-  async function submit(e:FormEvent){e.preventDefault();setBusy(true);setMessage("");setError(false);const normalized=email.trim().toLowerCase();setSessionMode(shared?"shared":"personal");const allowed=await supabase.rpc("is_login_email_allowed",{p_email:normalized});if(allowed.error){setBusy(false);setError(true);return setMessage("目前無法確認員工名單，請稍後再試或聯絡管理者。")}if(!allowed.data){setBusy(false);setError(true);return setMessage("此 Email 不在啟用的員工名單中，系統不會寄出登入信。")}const {error}=await supabase.auth.signInWithOtp({email:normalized,options:{emailRedirectTo:location.href.split("#")[0]}});setBusy(false);if(error){setError(true);setMessage(error.message)}else setMessage(shared?"登入連結已寄出。這是共用電腦模式，關閉瀏覽器分頁後需重新登入。":"登入連結已寄出，請到信箱點擊後回到這個頁面。")}
-  return <main className="auth-shell"><section className="auth-brand-panel"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><div className="auth-copy"><p className="section-kicker">MONTHLY SNACK CLUB</p><h1>把想吃的，<br/>變成下個月的零食。</h1><p>同仁提名、公開具名投票，再依預算產生採購建議。規則透明，選擇也更有參與感。</p></div><div className="auth-flow"><span>01 提名</span><span>02 投票</span><span>03 結果揭曉</span><span>04 安排採購</span></div></section><section className="auth-panel"><div className="auth-tools"><TextSizeControl/></div><form className="auth-card" onSubmit={submit}><p className="section-kicker">EMPLOYEE SIGN IN</p><h2>使用公司 Email 登入</h2><p>不需要設定密碼。系統只允許管理者名單中的 Email 查看與參與。</p><label>Email<input type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@company.com"/></label><button type="button" className={`shared-device ${shared?"selected":""}`} role="switch" aria-checked={shared} onClick={()=>setShared(x=>!x)}><span>共用電腦</span><strong>{shared?"已開啟":"未開啟"}</strong><small>開啟後，登入只保留到這個瀏覽器分頁關閉為止。</small></button><button className="auth-submit" disabled={busy}>{busy?"寄送中…":"寄送登入連結"}</button>{message&&<p className={`auth-message ${error?"error":""}`}>{message}</p>}<small className="auth-note">系統只會寄信給啟用名單中的 Email。登入後閒置 30 分鐘會自動登出。</small></form></section></main>
+  const [email,setEmail]=useState("");
+  const [token,setToken]=useState("");
+  const [step,setStep]=useState<"email"|"otp">("email");
+  const [busy,setBusy]=useState(false);
+  const [message,setMessage]=useState("");
+  const [error,setError]=useState(false);
+  const [shared,setShared]=useState(()=>getSessionMode()==="shared");
+  const [resendIn,setResendIn]=useState(0);
+
+  useEffect(()=>{
+    if(resendIn<=0)return;
+    const timer=window.setInterval(()=>setResendIn(value=>Math.max(0,value-1)),1000);
+    return()=>window.clearInterval(timer);
+  },[resendIn]);
+
+  function applySessionMode(){setSessionMode(shared?"shared":"personal")}
+  function showError(text:string){setError(true);setMessage(text)}
+
+  async function sendOtp(e?:FormEvent){
+    e?.preventDefault();
+    setBusy(true);setMessage("");setError(false);
+    const normalized=email.trim().toLowerCase();
+    applySessionMode();
+    const allowed=await supabase.rpc("is_login_email_allowed",{p_email:normalized});
+    if(allowed.error){setBusy(false);return showError("目前無法確認員工名單，請稍後再試或聯絡管理者。")}
+    if(!allowed.data){setBusy(false);return showError("此 Email 不在啟用的員工名單中，系統不會寄出驗證碼。")}
+    const {error}=await supabase.auth.signInWithOtp({email:normalized,options:{shouldCreateUser:true}});
+    setBusy(false);
+    if(error)return showError(error.message.includes("rate limit")?"驗證碼寄送次數過於頻繁，請稍後再試。":error.message);
+    setEmail(normalized);setToken("");setStep("otp");setResendIn(60);
+    setMessage("六位數驗證碼已寄出，請查看信箱。");
+  }
+
+  async function verify(e:FormEvent){
+    e.preventDefault();
+    if(!/^\d{6}$/.test(token))return showError("請輸入信件中的六位數驗證碼。");
+    setBusy(true);setMessage("");setError(false);applySessionMode();
+    const {error}=await supabase.auth.verifyOtp({email:email.trim().toLowerCase(),token,type:"email"});
+    setBusy(false);
+    if(error)return showError("驗證碼錯誤或已失效，請重新確認或再寄一次。");
+  }
+
+  const deviceControl=<button type="button" className={`shared-device ${shared?"selected":""}`} role="switch" aria-checked={shared} onClick={()=>setShared(x=>!x)}><span>共用電腦</span><strong>{shared?"已開啟":"未開啟"}</strong><small>{shared?"關閉分頁即清除登入；閒置 30 分鐘也會自動登出。":"個人電腦會安全保留登入，之後可直接開啟使用。"}</small></button>;
+
+  return <main className="auth-shell">
+    <section className="auth-brand-panel">
+      <div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div>
+      <div className="auth-copy"><p className="section-kicker">MONTHLY SNACK CLUB</p><h1>把想吃的，<br/>變成下個月的零食。</h1><p>同仁提名、公開具名投票，再依預算產生採購建議。規則透明，選擇也更有參與感。</p></div>
+      <div className="auth-flow"><span>01 提名</span><span>02 投票</span><span>03 結果揭曉</span><span>04 安排採購</span></div>
+    </section>
+    <section className="auth-panel">
+      <div className="auth-tools"><TextSizeControl/></div>
+      <div className="auth-card">
+        <p className="section-kicker">EMPLOYEE SIGN IN</p>
+        {step==="email"&&<form onSubmit={sendOtp}>
+          <h2>使用公司 Email 登入</h2>
+          <p>不需要密碼。輸入員工名單中的 Email，我們會寄送六位數驗證碼。</p>
+          <label>Email<input type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@company.com" autoFocus/></label>
+          {deviceControl}
+          <button className="auth-submit" disabled={busy}>{busy?"寄送中…":"寄送六位數驗證碼"}</button>
+        </form>}
+        {step==="otp"&&<form onSubmit={verify}>
+          <button type="button" className="auth-back" onClick={()=>{setStep("email");setToken("");setMessage("");setError(false)}}>← 修改 Email</button>
+          <h2>輸入驗證碼</h2>
+          <p>驗證碼已寄到 <strong>{email}</strong>。請在有效時間內完成登入。</p>
+          <label>六位數驗證碼<input className="otp-input" type="text" required inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" value={token} onChange={e=>setToken(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="000000" autoFocus/></label>
+          <button className="auth-submit" disabled={busy||token.length!==6}>{busy?"驗證中…":"驗證並登入"}</button>
+          <button type="button" className="resend-code" disabled={busy||resendIn>0} onClick={()=>void sendOtp()}>{resendIn>0?`${resendIn} 秒後可重新寄送`:"重新寄送驗證碼"}</button>
+        </form>}
+        {message&&<p className={`auth-message ${error?"error":""}`}>{message}</p>}
+        <small className="auth-note">系統只會寄信給啟用名單中的 Email。個人電腦會保留登入；共用裝置請開啟共用模式。</small>
+      </div>
+    </section>
+  </main>
 }
 
 function TextSizeControl(){const [large,setLarge]=useState(()=>localStorage.getItem("snack-vote-text-size")==="large");useEffect(()=>{document.documentElement.dataset.textSize=large?"large":"comfortable";localStorage.setItem("snack-vote-text-size",large?"large":"comfortable")},[large]);return <div className="text-size-control" aria-label="文字大小"><span>文字</span><button type="button" className={!large?"active":""} onClick={()=>setLarge(false)}>一般</button><button type="button" className={large?"active":""} onClick={()=>setLarge(true)}>放大</button></div>}
@@ -105,7 +176,7 @@ function EmployeeApp({employee}:{employee:Employee}){
   return <ShellHeader employee={employee}><section className="hero"><div className="hero-main"><div className="eyebrow"><span className="live-dot"/>{copy[0]} · {campaign.label}</div><h1>{copy[1]}</h1><p>{copy[2]}</p><div className="quota-row"><div className="quota-card"><span>我的提名</span><strong>{draftNominations.length}<small>／{campaign.nomination_limit}</small></strong></div><div className="quota-card"><span>本期票數</span><strong>{myVotes.length}<small>／{campaign.vote_limit}</small></strong></div></div></div><Timeline campaign={campaign} phase={phase}/></section><section className="content-head"><div><p className="section-kicker">SNACK CATALOG</p><h2>{phase==="nomination"?"今天想提名哪一款？":"看看大家支持誰"}</h2></div>{phase==="nomination"&&<button className="custom-product-button" onClick={()=>setCustomOpen(x=>!x)}>＋ 找不到商品？自行新增</button>}</section>{customOpen&&<form className="custom-product-form" onSubmit={addCustomProduct}><div><strong>新增商品並提名</strong><small>送出後會先列為待審商品；若被退回，提名名額與固定票會自動返還。</small></div><input required name="name" placeholder="商品名稱"/><input name="brand" placeholder="品牌（選填）"/><select required name="category" defaultValue=""><option value="" disabled>選擇分類</option>{categories.slice(1).map(x=><option key={x}>{x}</option>)}</select><input name="size" placeholder="規格（選填）"/><input name="reference_price" type="number" min="0" placeholder="參考價（選填）"/><label className="image-input">商品圖<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif"/></label><button>送出並提名</button></form>}<div className="filters filters-with-sort"><label className="search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜尋商品、品牌或分類"/></label><div className="category-list">{categories.map(c=><button key={c} className={c===category?"active":""} onClick={()=>setCategory(c)}>{c}</button>)}</div><label className="sort-control"><span>排序方式</span><select value={sortMode} onChange={e=>setSortMode(e.target.value as ProductSort)}><option value="smart">智慧排序</option><option value="votes">票數高到低</option><option value="name">商品名稱</option><option value="price-asc">價格低到高</option><option value="price-desc">價格高到低</option></select><small>我的提名／投票優先</small></label></div><section className="product-grid">{shown.map((p,index)=>{const ns=nominations.filter(n=>n.product_id===p.id);const vs=votes.filter(v=>v.product_id===p.id);const pcs=comments.filter(c=>c.product_id===p.id);const selected=draftNominations.includes(p.id);const voted=myVotes.some(v=>v.product_id===p.id);return <article className="product-card" key={p.id}><div className={`product-visual ${tones[index%tones.length]} ${p.image_path?"has-image":""}`}>{p.image_path?<img src={productImageUrl(p.image_path)} alt={`${p.brand} ${p.name}`}/>:<span>{icons[p.category]??"✦"}</span>}<small>{p.category}</small>{rankMap.has(p.id)&&["voting","results","purchase"].includes(phase)&&<b>第 {rankMap.get(p.id)} 名</b>}</div><div className="product-body"><div className="brand-line"><span>{p.brand}{p.approval_status==="pending"?" · 待管理者審核":""}</span><strong>{p.reference_price==null?"待確認":`參考 $${p.reference_price}`}</strong></div><h3>{p.name}</h3><p>{p.size}</p>{ns.length>0&&<div className="nominator"><span>{ns.map(n=>n.nominator_name).join("、")} 提名</span></div>}{["voting","results","purchase"].includes(phase)&&<div className="voter-line"><strong>第 {rankMap.get(p.id)} 名 · {vs.length} 票</strong><span>{vs.map(v=>v.voter_name).join("、")||"尚無投票"}</span></div>}<div className="card-actions">{phase==="nomination"?<button className={`primary-action ${selected?"selected":""}`} onClick={()=>toggleNomination(p)}>{selected?"✓ 已提名（可取消）":"＋ 納入本期"}</button>:phase==="voting"?<button className={`primary-action ${voted?"selected":""}`} onClick={()=>toggleVote(p)}>{voted?(myVotes.some(v=>v.product_id===p.id&&v.kind==="nomination")?"▣ 提名票":"✓ 已投票"):"投一票"}</button>:<span className="rank-label">第 {rankMap.get(p.id)} 名 · {vs.length} 票</span>}</div>{["nomination","voting"].includes(phase)&&<div className="comment-box"><div className="comment-list">{pcs.slice(-3).map(c=><p key={c.id}><strong>{c.author_name}</strong>{c.body}</p>)}{!pcs.length&&<small>還沒有人留言，來幫這款拉票吧。</small>}</div><div className="comment-compose"><input maxLength={500} value={commentDrafts[p.id]??""} onChange={e=>setCommentDrafts(x=>({...x,[p.id]:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();void addComment(p.id)}}} placeholder="留言拉票…"/><button onClick={()=>addComment(p.id)}>送出</button></div></div>}</div></article>})}{!shown.length&&<div className="empty-campaign">目前沒有符合條件的商品。</div>}</section>{toast&&<div className="toast">{toast}</div>}{confirmElement}</ShellHeader>
 }
 
-function ShellHeader({employee,children}:{employee:Employee;children:React.ReactNode}){return <main className="employee-shell"><header className="topbar"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><div className="top-actions"><TextSizeControl/><span className={`session-mode ${getSessionMode()}`}>{getSessionMode()==="shared"?"共用電腦模式":"此瀏覽器已登入"}</span>{employee.role==="admin"&&<a href="#/admin">管理後台</a>}<button onClick={()=>supabase.auth.signOut()}>登出</button><div className="profile"><span className="avatar">{employee.name.slice(0,1)}</span><div><strong>{employee.name}</strong><small>{employee.email} · 閒置 30 分鐘自動登出</small></div></div></div></header>{children}<footer>商品與價格僅供採購參考，實際售價及庫存以門市為準。</footer></main>}
+function ShellHeader({employee,children}:{employee:Employee;children:React.ReactNode}){const shared=getSessionMode()==="shared";return <main className="employee-shell"><header className="topbar"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><div className="top-actions"><TextSizeControl/><span className={`session-mode ${getSessionMode()}`}>{shared?"共用電腦模式":"此瀏覽器已登入"}</span>{employee.role==="admin"&&<a href="#/admin">管理後台</a>}<button onClick={()=>supabase.auth.signOut()}>登出</button><div className="profile"><span className="avatar">{employee.name.slice(0,1)}</span><div><strong>{employee.name}</strong><small>{employee.email}{shared?" · 閒置 30 分鐘自動登出":""}</small></div></div></div></header>{children}<footer>商品與價格僅供採購參考，實際售價及庫存以門市為準。</footer></main>}
 
 function Timeline({campaign,phase}:{campaign:Campaign;phase:Phase}){const index={upcoming:-1,nomination:0,voting:1,results:2,purchase:3}[phase];const items=[["開始",campaign.start_at],["提名截止",campaign.nomination_deadline],["投票截止",campaign.voting_deadline],["安排採購",campaign.purchase_at]];return <div className="timeline-panel"><div className="milestone-row">{items.map((x,i)=><div key={x[0]} className={`milestone ${i<=index?"done":""} ${i===index?"current":""}`}><span>{i+1}</span><strong>{x[0]}</strong><small>{shortDate(x[1])}</small></div>)}</div><div className="period-row"><div className={`period ${phase==="nomination"?"active":""}`}><strong>提名階段</strong><small>{shortDate(campaign.start_at)}–{shortDate(campaign.nomination_deadline)}</small></div><div className={`period ${phase==="voting"?"active":""}`}><strong>投票階段</strong><small>{shortDate(campaign.nomination_deadline)}–{shortDate(campaign.voting_deadline)}</small></div><div className={`period ${phase==="results"?"active":""}`}><strong>結果揭曉階段</strong><small>{shortDate(campaign.voting_deadline)}–{shortDate(campaign.purchase_at)}</small></div></div></div>}
 
@@ -119,9 +190,9 @@ function AdminApp({employee}:{employee:Employee}){
   const load=useCallback(async()=>{const [{data:e},{data:l},{data:c},{data:m},{data:p},{data:ca},{data:n},{data:v},{data:co},{data:pi}]=await Promise.all([supabase.from("employees").select("id,user_id,name,email,role,active,work_location_id").order("name"),supabase.from("work_locations").select("id,name,active").order("name"),supabase.from("campaigns").select("*").order("start_at",{ascending:false}),supabase.from("campaign_members").select("*").order("name_snapshot"),supabase.from("products").select("*").order("category"),supabase.from("product_categories").select("id,name,sort_order").order("sort_order").order("name"),supabase.from("nominations").select("*").order("created_at"),supabase.from("votes").select("*").order("created_at"),supabase.from("comments").select("*").is("deleted_at",null).order("created_at"),supabase.from("purchase_items").select("*").order("rank")]);setEmployees((e??[]) as Employee[]);setWorkLocations((l??[]) as WorkLocation[]);setCampaigns((c??[]) as Campaign[]);setMembers((m??[]) as CampaignMember[]);setProducts((p??[]) as Product[]);setProductCategories((ca??[]) as ProductCategory[]);setNominations((n??[]) as Nomination[]);setVotes((v??[]) as Vote[]);setComments((co??[]) as Comment[]);setPurchases((pi??[]) as PurchaseItem[])},[]);useEffect(()=>{void load()},[load]);
   useEffect(()=>{if(tab!=="products")return;const form=document.querySelector<HTMLFormElement>("form.product-form-with-image");if(!form)return;const draft=readFormDraft("snack-vote-admin-product-draft");Object.entries(draft).forEach(([name,value])=>{const field=form.elements.namedItem(name);if(field instanceof HTMLInputElement||field instanceof HTMLSelectElement){if(field.type!=="file")field.value=value}});const save=()=>saveFormDraft("snack-vote-admin-product-draft",form);form.addEventListener("input",save);form.addEventListener("change",save);return()=>{form.removeEventListener("input",save);form.removeEventListener("change",save)}},[tab]);
   function flash(text:string){setMessage(text);window.setTimeout(()=>setMessage(""),3500)}
-  async function addEmployee(e:FormEvent){e.preventDefault();if(!employeeLocation)return flash("請選擇上班地點");setBusy(true);const {error}=await supabase.from("employees").insert({name:name.trim(),email:email.trim().toLowerCase(),role:"employee",work_location_id:employeeLocation});setBusy(false);if(error)return flash(error.message);setName("");setEmail("");flash("員工已新增，可從名單寄送首次登入信");await load()}
-  async function sendLoginEmail(row:Employee){if(!row.active)return flash("請先重新啟用這位員工，再寄送登入信");setEmailingEmployeeId(row.id);const {error}=await supabase.auth.signInWithOtp({email:row.email,options:{emailRedirectTo:location.href.split("#")[0]}});setEmailingEmployeeId(null);if(error)return flash(error.message.includes("rate limit")?"寄信次數過於頻繁，請稍後再試":error.message);setSentEmployeeIds(previous=>new Set(previous).add(row.id));flash(`已寄送登入連結給 ${row.name}`)}
-  async function revokeEmployeeSessions(row:Employee){if(!row.user_id)return flash("這位員工尚未登入過，沒有可撤銷的工作階段");if(row.id===employee.id)return flash("不能從這裡撤銷目前登入的管理者工作階段");if(!await askConfirm({title:`要求 ${row.name} 重新登入？`,items:["此帳號在其他電腦與瀏覽器的登入工作階段都會失效。","員工下次使用時必須重新收取 Email 登入連結。"],confirmLabel:"撤銷所有登入",danger:true}))return;setBusy(true);const {error}=await supabase.functions.invoke("revoke-user-session",{body:{employeeId:row.id}});setBusy(false);if(error)return flash(`撤銷失敗：${error.message}`);flash(`${row.name} 的登入工作階段已全部撤銷`)}
+  async function addEmployee(e:FormEvent){e.preventDefault();if(!employeeLocation)return flash("請選擇上班地點");setBusy(true);const {error}=await supabase.from("employees").insert({name:name.trim(),email:email.trim().toLowerCase(),role:"employee",work_location_id:employeeLocation});setBusy(false);if(error)return flash(error.message);setName("");setEmail("");flash("員工已新增，可請對方使用 Email 驗證碼登入");await load()}
+  async function sendLoginEmail(row:Employee){if(!row.active)return flash("請先重新啟用這位員工，再寄送驗證碼");setEmailingEmployeeId(row.id);const {error}=await supabase.auth.signInWithOtp({email:row.email,options:{shouldCreateUser:true}});setEmailingEmployeeId(null);if(error)return flash(error.message.includes("rate limit")?"寄信次數過於頻繁，請稍後再試":error.message);setSentEmployeeIds(previous=>new Set(previous).add(row.id));flash(`已寄送登入驗證碼給 ${row.name}`)}
+  async function revokeEmployeeSessions(row:Employee){if(!row.user_id)return flash("這位員工尚未登入過，沒有可撤銷的工作階段");if(row.id===employee.id)return flash("不能從這裡撤銷目前登入的管理者工作階段");if(!await askConfirm({title:`要求 ${row.name} 重新登入？`,items:["此帳號在其他電腦與瀏覽器的登入工作階段都會失效。","員工下次使用時必須重新收取 Email 驗證碼登入。"],confirmLabel:"撤銷所有登入",danger:true}))return;setBusy(true);const {error}=await supabase.functions.invoke("revoke-user-session",{body:{employeeId:row.id}});setBusy(false);if(error)return flash(`撤銷失敗：${error.message}`);flash(`${row.name} 的登入工作階段已全部撤銷`)}
   async function updateEmployee(row:Employee,patch:Partial<Employee>){if(row.id===employee.id&&patch.active===false)return flash("不能停用目前登入的管理者");const {error}=await supabase.from("employees").update(patch).eq("id",row.id);if(error)flash(error.message);else await load()}
   async function addLocation(locationName:string){const clean=locationName.trim();if(!clean)return;const {error}=await supabase.from("work_locations").insert({name:clean});if(error)return flash(error.code==="23505"?"已有同名地點":error.message);flash(`已新增「${clean}」`);await load()}
   async function renameLocation(row:WorkLocation,newName:string){const clean=newName.trim();if(!clean||clean===row.name)return;const {error}=await supabase.from("work_locations").update({name:clean}).eq("id",row.id);if(error)return flash(error.code==="23505"?"已有同名地點":error.message);flash("上班地點已更新");await load()}

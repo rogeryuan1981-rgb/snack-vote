@@ -70,10 +70,18 @@
 
 Supabase 會自動提供該函式需要的 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 與 `SUPABASE_SERVICE_ROLE_KEY`，不要把 Service Role Key 加到 GitHub Variables。部署一次後，員工名單中的「要求重新登入」按鈕即可使用。
 
+## 本次必做：Email 六位數驗證碼
+
+本版僅保留 Email 六位數驗證碼登入，不使用 Microsoft Entra ID。請依照：
+
+`EMAIL-OTP-SETUP.md`
+
+完成 Supabase Email Template 設定。若只上傳程式而未修改信件範本，信件可能仍顯示舊的登入連結，而不是六位數驗證碼。
+
 ## 本版工作階段與文字顯示
 
 - 登入頁可選「共用電腦」；開啟後，關閉該瀏覽器分頁即清除登入。
-- 所有登入工作階段閒置 30 分鐘會自動登出。
+- 只有「共用電腦」模式閒置 30 分鐘會自動登出；個人電腦會保留登入，避免反覆驗證。
 - 員工頁及後台會顯示目前工作階段模式、姓名與 Email。
 - 全站預設字級已提高，並提供「一般／放大」文字切換；選擇會保存在該瀏覽器。
 
