@@ -71,10 +71,19 @@ begin
   remaining := campaign_budget;
 
   with vote_counts as (
-    select product_id, count(*)::integer as vote_count
-    from public.votes
-    where campaign_id = p_campaign_id
-    group by product_id
+    select v.product_id, count(*)::integer as vote_count
+    from public.votes v
+    join public.products p on p.id = v.product_id
+    where v.campaign_id = p_campaign_id
+      and p.active
+      and p.deleted_at is null
+      and p.approval_status <> 'rejected'
+      and exists (
+        select 1 from public.nominations n
+        where n.campaign_id = p_campaign_id
+          and n.product_id = v.product_id
+      )
+    group by v.product_id
   ), ranked as (
     select product_id,
       rank() over (order by vote_count desc)::integer as rank
@@ -88,7 +97,7 @@ begin
     );
 
   -- Existing products keep their manually maintained purchase price.
-  insert into public.purchase_items (
+  insert into public.purchase_items as target (
     campaign_id, product_id, rank, vote_count, unit_price,
     suggested_quantity, final_quantity, purchased
   )
@@ -107,7 +116,16 @@ begin
       count(*)::integer as vote_count,
       rank() over (order by count(*) desc)::integer as rank
     from public.votes v
+    join public.products eligible on eligible.id = v.product_id
     where v.campaign_id = p_campaign_id
+      and eligible.active
+      and eligible.deleted_at is null
+      and eligible.approval_status <> 'rejected'
+      and exists (
+        select 1 from public.nominations n
+        where n.campaign_id = p_campaign_id
+          and n.product_id = v.product_id
+      )
     group by v.product_id
   ) ranked
   join public.products p on p.id = ranked.product_id
@@ -118,6 +136,10 @@ begin
   on conflict (campaign_id, product_id) do update
   set rank = excluded.rank,
       vote_count = excluded.vote_count,
+      unit_price = case
+        when target.unit_price <= 0 then excluded.unit_price
+        else target.unit_price
+      end,
       suggested_quantity = 0,
       final_quantity = 0;
 
@@ -227,5 +249,96 @@ for each row execute function public.sync_unlocked_purchase_plan_after_vote();
 create trigger votes_sync_unlocked_purchase_plan_delete
 after delete on public.votes
 for each row execute function public.sync_unlocked_purchase_plan_after_vote();
+
+create or replace function public.sync_unlocked_purchase_plan_after_nomination()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_campaign_id uuid;
+  previous_campaign_id uuid;
+begin
+  target_campaign_id := case when tg_op = 'DELETE' then old.campaign_id else new.campaign_id end;
+  previous_campaign_id := case when tg_op = 'UPDATE' then old.campaign_id else null end;
+
+  if exists (
+    select 1 from public.campaigns c
+    where c.id = target_campaign_id
+      and c.purchase_plan_locked_at is null
+      and c.purchase_plan_generated_at is not null
+  ) then
+    perform public.generate_purchase_plan(target_campaign_id);
+  end if;
+
+  if previous_campaign_id is not null
+    and previous_campaign_id is distinct from target_campaign_id
+    and exists (
+      select 1 from public.campaigns c
+      where c.id = previous_campaign_id
+        and c.purchase_plan_locked_at is null
+        and c.purchase_plan_generated_at is not null
+    )
+  then
+    perform public.generate_purchase_plan(previous_campaign_id);
+  end if;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists nominations_sync_unlocked_purchase_plan_insert on public.nominations;
+drop trigger if exists nominations_sync_unlocked_purchase_plan_update on public.nominations;
+drop trigger if exists nominations_sync_unlocked_purchase_plan_delete on public.nominations;
+
+create trigger nominations_sync_unlocked_purchase_plan_insert
+after insert on public.nominations
+for each row execute function public.sync_unlocked_purchase_plan_after_nomination();
+
+create trigger nominations_sync_unlocked_purchase_plan_update
+after update of campaign_id, product_id on public.nominations
+for each row execute function public.sync_unlocked_purchase_plan_after_nomination();
+
+create trigger nominations_sync_unlocked_purchase_plan_delete
+after delete on public.nominations
+for each row execute function public.sync_unlocked_purchase_plan_after_nomination();
+
+create or replace function public.sync_unlocked_purchase_plans_after_product_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  affected_campaign record;
+begin
+  if new.active is not distinct from old.active
+    and new.deleted_at is not distinct from old.deleted_at
+    and new.approval_status is not distinct from old.approval_status
+    and new.reference_price is not distinct from old.reference_price
+  then
+    return null;
+  end if;
+
+  for affected_campaign in
+    select distinct c.id
+    from public.campaigns c
+    join public.votes v on v.campaign_id = c.id
+    where v.product_id = new.id
+      and c.purchase_plan_locked_at is null
+      and c.purchase_plan_generated_at is not null
+  loop
+    perform public.generate_purchase_plan(affected_campaign.id);
+  end loop;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists products_sync_unlocked_purchase_plans on public.products;
+create trigger products_sync_unlocked_purchase_plans
+after update of active, deleted_at, approval_status, reference_price on public.products
+for each row execute function public.sync_unlocked_purchase_plans_after_product_change();
 
 notify pgrst, 'reload schema';
