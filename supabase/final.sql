@@ -226,7 +226,7 @@ create table if not exists public.feedback_submissions (
   id uuid primary key default gen_random_uuid(),
   employee_id uuid not null references public.employees(id) on delete restrict,
   author_name text not null,
-  category text not null check (category in ('usability', 'nomination', 'voting', 'results_purchase', 'catalog', 'other')),
+  category text not null default 'other' check (category in ('usability', 'nomination', 'voting', 'results_purchase', 'catalog', 'other')),
   nomination_rating integer not null check (nomination_rating between 1 and 5),
   voting_rating integer not null check (voting_rating between 1 and 5),
   results_rating integer not null check (results_rating between 1 and 5),
@@ -2711,3 +2711,170 @@ from public.products
 where active and approval_status = 'approved'
 group by category
 order by category;
+
+-- ---------- multi-location model (employees, campaigns, products) ----------
+
+create table if not exists public.employee_work_locations (
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  work_location_id uuid not null references public.work_locations(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  primary key (employee_id, work_location_id)
+);
+
+create table if not exists public.campaign_work_locations (
+  campaign_id uuid not null references public.campaigns(id) on delete cascade,
+  work_location_id uuid not null references public.work_locations(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  primary key (campaign_id, work_location_id)
+);
+
+create table if not exists public.product_work_locations (
+  product_id uuid not null references public.products(id) on delete cascade,
+  work_location_id uuid not null references public.work_locations(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  primary key (product_id, work_location_id)
+);
+
+insert into public.employee_work_locations(employee_id, work_location_id)
+select id, work_location_id from public.employees e
+where work_location_id is not null
+  and not exists (select 1 from public.employee_work_locations x where x.employee_id=e.id)
+on conflict do nothing;
+
+insert into public.campaign_work_locations(campaign_id, work_location_id)
+select id, work_location_id from public.campaigns c
+where work_location_id is not null
+  and not exists (select 1 from public.campaign_work_locations x where x.campaign_id=c.id)
+on conflict do nothing;
+
+-- Existing products were historically shared by every office. Preserve that behavior
+-- on the first migration; administrators can subsequently restrict individual products.
+insert into public.product_work_locations(product_id, work_location_id)
+select p.id, l.id from public.products p cross join public.work_locations l
+where not exists (select 1 from public.product_work_locations x where x.product_id=p.id)
+on conflict do nothing;
+
+alter table public.employee_work_locations enable row level security;
+alter table public.campaign_work_locations enable row level security;
+alter table public.product_work_locations enable row level security;
+
+drop policy if exists employee_work_locations_select on public.employee_work_locations;
+create policy employee_work_locations_select on public.employee_work_locations for select to authenticated
+using (employee_id=public.current_employee_id() or public.is_admin());
+drop policy if exists employee_work_locations_admin_all on public.employee_work_locations;
+create policy employee_work_locations_admin_all on public.employee_work_locations for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists campaign_work_locations_select on public.campaign_work_locations;
+create policy campaign_work_locations_select on public.campaign_work_locations for select to authenticated using (true);
+drop policy if exists campaign_work_locations_admin_all on public.campaign_work_locations;
+create policy campaign_work_locations_admin_all on public.campaign_work_locations for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists product_work_locations_select on public.product_work_locations;
+create policy product_work_locations_select on public.product_work_locations for select to authenticated using (true);
+drop policy if exists product_work_locations_admin_all on public.product_work_locations;
+create policy product_work_locations_admin_all on public.product_work_locations for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+grant select,insert,update,delete on public.employee_work_locations, public.campaign_work_locations, public.product_work_locations to authenticated;
+
+create or replace function public.set_employee_locations(p_employee_id uuid, p_location_ids uuid[])
+returns void language plpgsql security definer set search_path=public as $$
+declare primary_location uuid;
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  if coalesce(array_length(p_location_ids,1),0)=0 then raise exception 'LOCATION_REQUIRED'; end if;
+  select id into primary_location from public.work_locations where id=any(p_location_ids) and active order by created_at limit 1;
+  if primary_location is null then raise exception 'ACTIVE_LOCATION_REQUIRED'; end if;
+  delete from public.employee_work_locations where employee_id=p_employee_id and work_location_id<>all(p_location_ids);
+  insert into public.employee_work_locations(employee_id,work_location_id)
+  select p_employee_id,id from public.work_locations where id=any(p_location_ids) on conflict do nothing;
+  update public.employees set work_location_id=primary_location where id=p_employee_id;
+end; $$;
+grant execute on function public.set_employee_locations(uuid,uuid[]) to authenticated;
+
+create or replace function public.set_campaign_locations(p_campaign_id uuid, p_location_ids uuid[])
+returns void language plpgsql security definer set search_path=public as $$
+declare primary_location uuid;
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  if coalesce(array_length(p_location_ids,1),0)=0 then raise exception 'LOCATION_REQUIRED'; end if;
+  select id into primary_location from public.work_locations where id=any(p_location_ids) and active order by created_at limit 1;
+  if primary_location is null then raise exception 'ACTIVE_LOCATION_REQUIRED'; end if;
+  delete from public.campaign_work_locations where campaign_id=p_campaign_id and work_location_id<>all(p_location_ids);
+  insert into public.campaign_work_locations(campaign_id,work_location_id)
+  select p_campaign_id,id from public.work_locations where id=any(p_location_ids) on conflict do nothing;
+  update public.campaigns set work_location_id=primary_location where id=p_campaign_id;
+end; $$;
+grant execute on function public.set_campaign_locations(uuid,uuid[]) to authenticated;
+
+create or replace function public.set_product_locations(p_product_id uuid, p_location_ids uuid[])
+returns void language plpgsql security definer set search_path=public as $$
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  if coalesce(array_length(p_location_ids,1),0)=0 then raise exception 'LOCATION_REQUIRED'; end if;
+  delete from public.product_work_locations where product_id=p_product_id and work_location_id<>all(p_location_ids);
+  insert into public.product_work_locations(product_id,work_location_id)
+  select p_product_id,id from public.work_locations where id=any(p_location_ids) on conflict do nothing;
+end; $$;
+grant execute on function public.set_product_locations(uuid,uuid[]) to authenticated;
+
+create or replace function public.inherit_product_campaign_locations(p_product_id uuid, p_campaign_id uuid)
+returns void language plpgsql security definer set search_path=public as $$
+declare employee_id uuid:=public.current_employee_id();
+begin
+  if employee_id is null then raise exception 'NOT_AUTHORIZED'; end if;
+  if not exists(select 1 from public.products where id=p_product_id and created_by=employee_id) then raise exception 'PRODUCT_OWNER_REQUIRED'; end if;
+  if not exists(select 1 from public.campaign_members where campaign_id=p_campaign_id and employee_id=employee_id and active) then raise exception 'CAMPAIGN_MEMBER_REQUIRED'; end if;
+  delete from public.product_work_locations where product_id=p_product_id;
+  insert into public.product_work_locations(product_id,work_location_id)
+  select p_product_id,work_location_id from public.campaign_work_locations where campaign_id=p_campaign_id on conflict do nothing;
+end; $$;
+grant execute on function public.inherit_product_campaign_locations(uuid,uuid) to authenticated;
+
+create or replace function public.snapshot_active_employees(p_campaign_id uuid)
+returns integer language plpgsql security definer set search_path=public as $$
+declare affected integer;
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  insert into public.campaign_members(campaign_id,employee_id,name_snapshot,email_snapshot,active)
+  select p_campaign_id,e.id,e.name,e.email,true from public.employees e
+  where e.active and exists (
+    select 1 from public.employee_work_locations el
+    join public.campaign_work_locations cl on cl.work_location_id=el.work_location_id
+    where el.employee_id=e.id and cl.campaign_id=p_campaign_id
+  )
+  on conflict(campaign_id,employee_id) do update set name_snapshot=excluded.name_snapshot,email_snapshot=excluded.email_snapshot,active=true;
+  get diagnostics affected=row_count;
+  update public.campaign_members m set active=false
+  where m.campaign_id=p_campaign_id and not exists (
+    select 1 from public.employee_work_locations el
+    join public.campaign_work_locations cl on cl.work_location_id=el.work_location_id
+    where el.employee_id=m.employee_id and cl.campaign_id=p_campaign_id
+  );
+  return affected;
+end; $$;
+grant execute on function public.snapshot_active_employees(uuid) to authenticated;
+
+create or replace function public.validate_campaign_member_location()
+returns trigger language plpgsql set search_path=public as $$
+begin
+  if not exists (
+    select 1 from public.employee_work_locations el
+    join public.campaign_work_locations cl on cl.work_location_id=el.work_location_id
+    where el.employee_id=new.employee_id and cl.campaign_id=new.campaign_id
+  ) then raise exception 'EMPLOYEE_LOCATION_MISMATCH'; end if;
+  return new;
+end; $$;
+
+create or replace function public.delete_work_location(p_location_id uuid)
+returns void language plpgsql security definer set search_path=public as $$
+begin
+  if not public.is_admin() then raise exception 'ADMIN_REQUIRED'; end if;
+  if exists(select 1 from public.employee_work_locations where work_location_id=p_location_id) then raise exception 'LOCATION_HAS_EMPLOYEES'; end if;
+  if exists(select 1 from public.campaign_work_locations where work_location_id=p_location_id) then raise exception 'LOCATION_HAS_CAMPAIGNS'; end if;
+  if exists(select 1 from public.product_work_locations where work_location_id=p_location_id) then raise exception 'LOCATION_HAS_PRODUCTS'; end if;
+  delete from public.work_locations where id=p_location_id;
+end; $$;
+grant execute on function public.delete_work_location(uuid) to authenticated;
