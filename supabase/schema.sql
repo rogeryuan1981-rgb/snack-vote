@@ -60,6 +60,8 @@ create table if not exists public.campaigns (
   voting_deadline timestamptz not null,
   purchase_at timestamptz not null,
   status text not null default 'draft' check (status in ('draft', 'active', 'archived')),
+  purchase_plan_locked_at timestamptz,
+  purchase_plan_locked_by uuid references public.employees(id) on delete set null,
   created_by uuid references public.employees(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
