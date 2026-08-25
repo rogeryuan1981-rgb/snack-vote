@@ -46,3 +46,215 @@
     justify-self: start;
   }
 }
+
+.final-ranking-control {
+  height: 54px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid #cad8c5;
+  border-radius: 14px;
+  background: #edf6dc;
+}
+
+.final-ranking-control > span {
+  color: #718078;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.final-ranking-control > strong {
+  color: var(--green);
+  font-size: 14px;
+}
+
+.final-ranking-control > small {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: #52704f;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.employee-purchase-plan {
+  margin: 8px 0 46px;
+  padding: 25px;
+  border: 1px solid rgba(21, 63, 49, .14);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, .8);
+  box-shadow: 0 16px 48px rgba(36, 60, 49, .07);
+}
+
+.employee-purchase-plan > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.employee-purchase-plan h2 {
+  margin: 4px 0 8px;
+  font-size: 27px;
+}
+
+.employee-purchase-plan header > div:first-child > span {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e7f4cf;
+  color: #3d6435;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.arrival-card {
+  min-width: 190px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  background: var(--green);
+  color: #fff;
+}
+
+.arrival-card small,
+.arrival-card strong {
+  display: block;
+}
+
+.arrival-card small {
+  color: #bfd0c8;
+  font-size: 11px;
+}
+
+.arrival-card strong {
+  margin-top: 5px;
+  font-size: 16px;
+}
+
+.employee-purchase-list {
+  display: grid;
+  gap: 8px;
+}
+
+.employee-purchase-list article {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #e0e7dc;
+  border-radius: 14px;
+  background: #fbfcf8;
+}
+
+.employee-purchase-list article > b {
+  color: #2f5b45;
+  font-size: 13px;
+}
+
+.employee-purchase-list article div strong,
+.employee-purchase-list article div small {
+  display: block;
+}
+
+.employee-purchase-list article div strong {
+  font-size: 14px;
+}
+
+.employee-purchase-list article div small {
+  margin-top: 4px;
+  color: #718078;
+  font-size: 11px;
+}
+
+.employee-purchase-list article > span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #fff0d7;
+  color: #836328;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.employee-purchase-list article > span.purchased {
+  background: #e4f3cf;
+  color: #3b6730;
+}
+
+.purchase-plan-empty {
+  padding: 26px;
+  border: 1px dashed #ced9ca;
+  border-radius: 14px;
+  color: #718078;
+  text-align: center;
+}
+
+.employee-budget-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.employee-budget-summary > div {
+  padding: 16px;
+  border-radius: 14px;
+  background: #eef4e6;
+}
+
+.employee-budget-summary > div:nth-child(2) {
+  background: var(--green);
+  color: #fff;
+}
+
+.employee-budget-summary > div.negative {
+  background: #fff0e9;
+  color: #8c3f2d;
+}
+
+.employee-budget-summary span,
+.employee-budget-summary strong {
+  display: block;
+}
+
+.employee-budget-summary span {
+  font-size: 11px;
+  opacity: .72;
+}
+
+.employee-budget-summary strong {
+  margin-top: 6px;
+  font-size: 20px;
+}
+
+@media (max-width: 700px) {
+  .employee-purchase-plan {
+    padding: 18px;
+  }
+
+  .employee-purchase-plan > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .arrival-card {
+    min-width: 0;
+  }
+
+  .employee-purchase-list article {
+    grid-template-columns: 62px 1fr;
+  }
+
+  .employee-purchase-list article > span {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .employee-budget-summary {
+    grid-template-columns: 1fr;
+  }
+}

@@ -8,6 +8,9 @@ alter table public.campaigns
   add column if not exists purchase_plan_locked_by uuid
   references public.employees(id) on delete set null;
 
+alter table public.campaigns
+  add column if not exists purchase_expected_arrival_date date;
+
 create or replace function public.set_purchase_plan_lock(
   p_campaign_id uuid,
   p_locked boolean
