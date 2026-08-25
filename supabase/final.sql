@@ -193,6 +193,20 @@ create table if not exists public.comments (
 create index if not exists comments_campaign_product_idx
 on public.comments (campaign_id, product_id, created_at);
 
+create table if not exists public.product_reactions (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  reactor_name text not null,
+  reaction smallint not null check (reaction in (-1, 1)),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (product_id, employee_id)
+);
+
+create index if not exists product_reactions_product_reaction_idx
+on public.product_reactions (product_id, reaction, created_at);
+
 create table if not exists public.purchase_reviews (
   id uuid primary key default gen_random_uuid(),
   campaign_id uuid not null references public.campaigns(id) on delete cascade,
@@ -478,7 +492,7 @@ do $$
 declare table_name text;
 begin
   foreach table_name in array array[
-    'employees', 'campaigns', 'products', 'votes', 'comments', 'purchase_reviews', 'feedback_submissions', 'purchase_items'
+    'employees', 'campaigns', 'products', 'votes', 'comments', 'product_reactions', 'purchase_reviews', 'feedback_submissions', 'purchase_items'
   ] loop
     execute format('drop trigger if exists %I_set_updated_at on public.%I', table_name, table_name);
     execute format(
@@ -518,7 +532,7 @@ declare table_name text;
 begin
   foreach table_name in array array[
     'employees', 'campaigns', 'campaign_members', 'products', 'nominations',
-    'votes', 'comments', 'purchase_reviews', 'feedback_submissions', 'purchase_items', 'email_deliveries'
+    'votes', 'comments', 'product_reactions', 'purchase_reviews', 'feedback_submissions', 'purchase_items', 'email_deliveries'
   ] loop
     execute format('drop trigger if exists %I_audit on public.%I', table_name, table_name);
     execute format(
@@ -830,6 +844,7 @@ alter table public.products enable row level security;
 alter table public.nominations enable row level security;
 alter table public.votes enable row level security;
 alter table public.comments enable row level security;
+alter table public.product_reactions enable row level security;
 alter table public.purchase_reviews enable row level security;
 alter table public.feedback_submissions enable row level security;
 alter table public.purchase_items enable row level security;
@@ -929,6 +944,26 @@ drop policy if exists comments_admin_delete on public.comments;
 create policy comments_admin_delete on public.comments for delete to authenticated
 using (public.is_admin());
 
+drop policy if exists product_reactions_select on public.product_reactions;
+create policy product_reactions_select on public.product_reactions for select to authenticated
+using (true);
+drop policy if exists product_reactions_insert on public.product_reactions;
+create policy product_reactions_insert on public.product_reactions for insert to authenticated
+with check (
+  employee_id = public.current_employee_id()
+  and reactor_name = (select e.name from public.employees e where e.id = public.current_employee_id())
+);
+drop policy if exists product_reactions_update on public.product_reactions;
+create policy product_reactions_update on public.product_reactions for update to authenticated
+using (employee_id = public.current_employee_id())
+with check (
+  employee_id = public.current_employee_id()
+  and reactor_name = (select e.name from public.employees e where e.id = public.current_employee_id())
+);
+drop policy if exists product_reactions_delete on public.product_reactions;
+create policy product_reactions_delete on public.product_reactions for delete to authenticated
+using (employee_id = public.current_employee_id() or public.is_admin());
+
 drop policy if exists purchase_reviews_select on public.purchase_reviews;
 create policy purchase_reviews_select on public.purchase_reviews for select to authenticated
 using (public.is_campaign_member(campaign_id));
@@ -1008,10 +1043,10 @@ using (public.is_admin());
 revoke all on public.audit_logs from anon, authenticated;
 grant select on public.audit_logs to authenticated;
 grant select on public.work_locations, public.employees, public.campaigns, public.campaign_members,
-  public.product_categories, public.products, public.nominations, public.votes, public.comments,
+  public.product_categories, public.products, public.nominations, public.votes, public.comments, public.product_reactions,
   public.purchase_reviews, public.feedback_submissions, public.purchase_items, public.email_deliveries to authenticated;
 grant insert, update, delete on public.work_locations, public.employees, public.campaigns, public.campaign_members,
-  public.product_categories, public.products, public.nominations, public.votes, public.comments,
+  public.product_categories, public.products, public.nominations, public.votes, public.comments, public.product_reactions,
   public.purchase_reviews, public.feedback_submissions, public.purchase_items, public.email_deliveries to authenticated;
 grant usage, select on all sequences in schema public to authenticated;
 
@@ -1021,7 +1056,7 @@ do $$
 declare table_name text;
 begin
   foreach table_name in array array[
-    'campaigns', 'products', 'nominations', 'votes', 'comments', 'purchase_reviews', 'feedback_submissions', 'purchase_items'
+    'campaigns', 'products', 'nominations', 'votes', 'comments', 'product_reactions', 'purchase_reviews', 'feedback_submissions', 'purchase_items'
   ] loop
     if not exists (
       select 1 from pg_publication_tables
