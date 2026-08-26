@@ -37,7 +37,7 @@ create table if not exists public.work_locations (
   updated_at timestamptz not null default now()
 );
 create unique index if not exists work_locations_name_unique on public.work_locations(lower(btrim(name)));
-insert into public.work_locations(name) values ('主要辦公室') on conflict do nothing;
+insert into public.work_locations(name) values ('專案辦公室') on conflict do nothing;
 
 create table if not exists public.employees (
   id uuid primary key default gen_random_uuid(),
@@ -110,8 +110,8 @@ on public.product_categories (lower(btrim(name)));
 
 insert into public.product_categories (name, sort_order)
 values
-  ('洋芋片', 10), ('餅乾', 20), ('巧克力', 30), ('糖果果凍', 40),
-  ('米果', 50), ('堅果果乾', 60), ('海苔肉乾', 70), ('飲料', 80)
+  ('堅果', 10), ('巧克力', 20), ('洋芋片', 30), ('米果', 40),
+  ('糖果', 50), ('餅乾', 60), ('海苔肉乾', 70)
 on conflict do nothing;
 
 create table if not exists public.products (
@@ -628,6 +628,7 @@ as $$
 declare
   employee_id uuid := public.current_employee_id();
   product_id uuid;
+  assigned_location_count integer := 0;
 begin
   if employee_id is null then raise exception 'NOT_AUTHORIZED'; end if;
   if length(btrim(p_name)) = 0 or length(btrim(p_category)) = 0 then raise exception 'INVALID_PRODUCT'; end if;
@@ -650,6 +651,33 @@ begin
     p_reference_price, nullif(btrim(coalesce(p_source_url, '')), ''),
     'employee', 'pending', employee_id
   ) returning id into product_id;
+
+  -- A product submitted from an activity belongs to that activity's locations.
+  -- Employees do not choose locations themselves; an administrator may adjust
+  -- these inherited locations while the product is pending review.
+  insert into public.product_work_locations (product_id, work_location_id)
+  select product_id, cwl.work_location_id
+  from public.campaign_work_locations cwl
+  where cwl.campaign_id = p_campaign_id
+  on conflict do nothing;
+
+  get diagnostics assigned_location_count = row_count;
+
+  -- Compatibility for campaigns created before multi-location support.
+  if assigned_location_count = 0 then
+    insert into public.product_work_locations (product_id, work_location_id)
+    select product_id, c.work_location_id
+    from public.campaigns c
+    where c.id = p_campaign_id
+      and c.work_location_id is not null
+    on conflict do nothing;
+
+    get diagnostics assigned_location_count = row_count;
+  end if;
+
+  if assigned_location_count = 0 then
+    raise exception 'CAMPAIGN_LOCATION_REQUIRED';
+  end if;
 
   perform public.nominate_product(p_campaign_id, product_id);
   return product_id;
@@ -1144,7 +1172,7 @@ grant execute on function public.force_delete_campaign(uuid,text) to authenticat
 -- After this script succeeds, run the following separately with your real details:
 -- insert into public.employees (name, email, role, work_location_id)
 -- select '管理者姓名', 'your-company-email@example.com', 'admin', id
--- from public.work_locations order by created_at limit 1;
+-- from public.work_locations where name='專案辦公室' order by created_at limit 1;
 
 
 -- ============================================================================
@@ -1242,6 +1270,13 @@ begin
   end if;
 
   if p_decision = 'approved' then
+    if not exists (
+      select 1 from public.product_work_locations
+      where product_id = p_product_id
+    ) then
+      raise exception 'PRODUCT_LOCATION_REQUIRED';
+    end if;
+
     update public.products
     set approval_status = 'approved', active = true
     where id = p_product_id;
@@ -1422,19 +1457,17 @@ on public.product_categories (lower(btrim(name)));
 alter table public.products
 add column if not exists deleted_at timestamptz;
 
-insert into public.product_categories (name, sort_order)
-select category, row_number() over (order by category)::integer
-from (
-  select distinct btrim(category) as category
-  from public.products
-  where btrim(category) <> ''
-) existing
-on conflict do nothing;
+-- Normalize the two legacy default names. Arbitrary product values are no
+-- longer imported as categories here; additional categories must be created
+-- deliberately by an administrator.
+update public.products set category='糖果' where btrim(category)='糖果果凍';
+update public.products set category='堅果' where btrim(category)='堅果果乾';
+delete from public.product_categories where btrim(name) in ('糖果果凍','堅果果乾');
 
 insert into public.product_categories (name, sort_order)
 values
-  ('洋芋片', 10), ('餅乾', 20), ('巧克力', 30), ('糖果果凍', 40),
-  ('米果', 50), ('堅果果乾', 60), ('海苔肉乾', 70), ('飲料', 80)
+  ('堅果', 10), ('巧克力', 20), ('洋芋片', 30), ('米果', 40),
+  ('糖果', 50), ('餅乾', 60), ('海苔肉乾', 70)
 on conflict do nothing;
 
 alter table public.product_categories enable row level security;
@@ -1671,13 +1704,13 @@ create table if not exists public.work_locations (
 );
 create unique index if not exists work_locations_name_unique on public.work_locations(lower(btrim(name)));
 
-insert into public.work_locations(name) values ('主要辦公室') on conflict do nothing;
+insert into public.work_locations(name) values ('專案辦公室') on conflict do nothing;
 
 alter table public.employees add column if not exists work_location_id uuid references public.work_locations(id) on delete restrict;
 alter table public.campaigns add column if not exists work_location_id uuid references public.work_locations(id) on delete restrict;
 
-update public.employees set work_location_id=(select id from public.work_locations order by created_at limit 1) where work_location_id is null;
-update public.campaigns set work_location_id=(select id from public.work_locations order by created_at limit 1) where work_location_id is null;
+update public.employees set work_location_id=(select id from public.work_locations where name='專案辦公室' order by created_at limit 1) where work_location_id is null;
+update public.campaigns set work_location_id=(select id from public.work_locations where name='專案辦公室' order by created_at limit 1) where work_location_id is null;
 alter table public.employees alter column work_location_id set not null;
 alter table public.campaigns alter column work_location_id set not null;
 
@@ -2659,11 +2692,11 @@ with seed(brand, name, category, size, source_url) as (
     ('明治', '夏威夷豆可可粒', '巧克力', '64g', 'https://pxbox.es.pxmart.com.tw/product/196490'),
     ('健達', '繽紛樂巧克力', '巧克力', '單條裝', null),
 
-    ('義美', '知心水果軟糖－草莓風味', '糖果果凍', '94.5g', 'https://pxbox.es.pxmart.com.tw/product/357922'),
-    ('森永', '嗨啾軟糖－綜合水果', '糖果果凍', '約 100g', null),
-    ('哈瑞寶', '金熊Q軟糖', '糖果果凍', '約 100g', null),
-    ('盛香珍', 'Dr.Q蒟蒻果凍－綜合水果', '糖果果凍', '約 265g', null),
-    ('曼陀珠', '綜合水果軟糖', '糖果果凍', '分享包', null),
+    ('義美', '知心水果軟糖－草莓風味', '糖果', '94.5g', 'https://pxbox.es.pxmart.com.tw/product/357922'),
+    ('森永', '嗨啾軟糖－綜合水果', '糖果', '約 100g', null),
+    ('哈瑞寶', '金熊Q軟糖', '糖果', '約 100g', null),
+    ('盛香珍', 'Dr.Q蒟蒻果凍－綜合水果', '糖果', '約 265g', null),
+    ('曼陀珠', '綜合水果軟糖', '糖果', '分享包', null),
 
     ('旺旺', '仙貝', '米果', '分享包', null),
     ('旺旺', '雪餅', '米果', '分享包', null),
@@ -2671,23 +2704,17 @@ with seed(brand, name, category, size, source_url) as (
     ('喜年來', '蛋捲', '米果', '約 192g', null),
     ('義美', '糙米米果', '米果', '分享包', null),
 
-    ('萬歲牌', '無調味綜合堅果', '堅果果乾', '約 170g', null),
-    ('萬歲牌', '蜜汁腰果', '堅果果乾', '約 160g', null),
-    ('盛香珍', '蒜香青豆', '堅果果乾', '約 240g', null),
-    ('味彩', '綜合豆果子', '堅果果乾', '360g（24g×15包）', 'https://pxbox.es.pxmart.com.tw/product/431986'),
-    ('每日優果', '綜合堅果', '堅果果乾', '隨手包', null),
+    ('萬歲牌', '無調味綜合堅果', '堅果', '約 170g', null),
+    ('萬歲牌', '蜜汁腰果', '堅果', '約 160g', null),
+    ('盛香珍', '蒜香青豆', '堅果', '約 240g', null),
+    ('味彩', '綜合豆果子', '堅果', '360g（24g×15包）', 'https://pxbox.es.pxmart.com.tw/product/431986'),
+    ('每日優果', '綜合堅果', '堅果', '隨手包', null),
 
     ('元本山', '味付海苔', '海苔肉乾', '分享包', null),
     ('小老板', '厚片海苔－原味', '海苔肉乾', '分享包', null),
     ('新東陽', '蜜汁豬肉乾', '海苔肉乾', '約 100g', null),
     ('快車肉乾', '特厚蜜汁豬肉乾', '海苔肉乾', '分享包', null),
-    ('良澔', '片烤海苔－椒鹽口味', '海苔肉乾', '分享包', null),
-
-    ('Cheers', '氣泡水', '飲料', '500ml', 'https://pxbox.es.pxmart.com.tw/product/2560'),
-    ('御茶園', '日式綠茶－無糖', '飲料', '550ml', null),
-    ('黑松', 'FIN補給飲料', '飲料', '580ml', null),
-    ('可口可樂', '零卡可樂', '飲料', '600ml', null),
-    ('伯朗', '藍山風味咖啡', '飲料', '240ml', null)
+    ('良澔', '片烤海苔－椒鹽口味', '海苔肉乾', '分享包', null)
 )
 insert into public.products (
   brand, name, category, size, reference_price, source_url,
@@ -2747,10 +2774,10 @@ where work_location_id is not null
   and not exists (select 1 from public.campaign_work_locations x where x.campaign_id=c.id)
 on conflict do nothing;
 
--- Existing products were historically shared by every office. Preserve that behavior
--- on the first migration; administrators can subsequently restrict individual products.
+-- All existing products default to the project office only.
 insert into public.product_work_locations(product_id, work_location_id)
-select p.id, l.id from public.products p cross join public.work_locations l
+select p.id, l.id from public.products p
+join public.work_locations l on l.name='專案辦公室'
 where not exists (select 1 from public.product_work_locations x where x.product_id=p.id)
 on conflict do nothing;
 
@@ -2822,7 +2849,9 @@ grant execute on function public.set_product_locations(uuid,uuid[]) to authentic
 
 create or replace function public.inherit_product_campaign_locations(p_product_id uuid, p_campaign_id uuid)
 returns void language plpgsql security definer set search_path=public as $$
-declare employee_id uuid:=public.current_employee_id();
+declare
+  employee_id uuid:=public.current_employee_id();
+  assigned_location_count integer:=0;
 begin
   if employee_id is null then raise exception 'NOT_AUTHORIZED'; end if;
   if not exists(select 1 from public.products where id=p_product_id and created_by=employee_id) then raise exception 'PRODUCT_OWNER_REQUIRED'; end if;
@@ -2830,6 +2859,18 @@ begin
   delete from public.product_work_locations where product_id=p_product_id;
   insert into public.product_work_locations(product_id,work_location_id)
   select p_product_id,work_location_id from public.campaign_work_locations where campaign_id=p_campaign_id on conflict do nothing;
+
+  get diagnostics assigned_location_count = row_count;
+
+  if assigned_location_count=0 then
+    insert into public.product_work_locations(product_id,work_location_id)
+    select p_product_id,work_location_id from public.campaigns
+    where id=p_campaign_id and work_location_id is not null
+    on conflict do nothing;
+    get diagnostics assigned_location_count = row_count;
+  end if;
+
+  if assigned_location_count=0 then raise exception 'CAMPAIGN_LOCATION_REQUIRED'; end if;
 end; $$;
 grant execute on function public.inherit_product_campaign_locations(uuid,uuid) to authenticated;
 
@@ -2878,3 +2919,88 @@ begin
   delete from public.work_locations where id=p_location_id;
 end; $$;
 grant execute on function public.delete_work_location(uuid) to authenticated;
+
+create table if not exists public.app_migrations (
+  migration_key text primary key,
+  applied_at timestamptz not null default now()
+);
+
+-- Normalize installations that previously used the old default location or
+-- assigned every product to every office. The marker prevents later executions
+-- of final.sql from overwriting location changes made after this repair.
+do $$
+declare
+  project_location uuid;
+  old_default_location uuid;
+begin
+  if exists (
+    select 1 from public.app_migrations
+    where migration_key='20260825_product_default_project_office'
+  ) then
+    return;
+  end if;
+
+  insert into public.work_locations(name, active)
+  values ('專案辦公室', true)
+  on conflict do nothing;
+
+  select id into project_location
+  from public.work_locations
+  where lower(btrim(name))=lower('專案辦公室')
+  order by created_at
+  limit 1;
+
+  if project_location is null then
+    raise exception 'PROJECT_OFFICE_NOT_FOUND';
+  end if;
+
+  select id into old_default_location
+  from public.work_locations
+  where lower(btrim(name))=lower('主要辦公室')
+  order by created_at
+  limit 1;
+
+  if old_default_location is not null and old_default_location<>project_location then
+    insert into public.employee_work_locations(employee_id,work_location_id)
+    select employee_id,project_location
+    from public.employee_work_locations
+    where work_location_id=old_default_location
+    on conflict do nothing;
+
+    insert into public.campaign_work_locations(campaign_id,work_location_id)
+    select campaign_id,project_location
+    from public.campaign_work_locations
+    where work_location_id=old_default_location
+    on conflict do nothing;
+
+    update public.employees
+    set work_location_id=project_location
+    where work_location_id=old_default_location;
+
+    update public.campaigns
+    set work_location_id=project_location
+    where work_location_id=old_default_location;
+
+    delete from public.employee_work_locations where work_location_id=old_default_location;
+    delete from public.campaign_work_locations where work_location_id=old_default_location;
+    delete from public.product_work_locations where work_location_id=old_default_location;
+    delete from public.work_locations where id=old_default_location;
+  end if;
+
+  -- The requested baseline is explicit: every current product belongs only to
+  -- 專案辦公室. This also repairs databases that already ran the prior version.
+  delete from public.product_work_locations
+  where work_location_id<>project_location;
+
+  insert into public.product_work_locations(product_id,work_location_id)
+  select id,project_location from public.products
+  on conflict do nothing;
+
+  insert into public.app_migrations(migration_key)
+  values ('20260825_product_default_project_office')
+  on conflict do nothing;
+end;
+$$;
+
+alter table public.app_migrations enable row level security;
+revoke all on public.app_migrations from anon, authenticated;

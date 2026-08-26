@@ -154,7 +154,7 @@ type PurchaseItem = {
 };
 type Phase = "upcoming" | "nomination" | "voting" | "results" | "purchase";
 type ProductSort = "smart" | "votes" | "name" | "price-asc" | "price-desc";
-const icons: Record<string, string> = { 洋芋片: "◒", 餅乾: "▦", 巧克力: "◆", 糖果果凍: "●", 米果: "❋", 堅果果乾: "♧", 海苔肉乾: "▤", 飲料: "◫" };
+const icons: Record<string, string> = { 堅果: "♧", 巧克力: "◆", 洋芋片: "◒", 米果: "❋", 糖果: "●", 餅乾: "▦", 海苔肉乾: "▤" };
 const tones = ["tone-1", "tone-2", "tone-3", "tone-4", "tone-5", "tone-6"];
 function phaseOf(c: Campaign): Phase { const now = Date.now(); if (now < +new Date(c.start_at))
     return "upcoming"; if (now < +new Date(c.nomination_deadline))
@@ -163,7 +163,13 @@ function phaseOf(c: Campaign): Phase { const now = Date.now(); if (now < +new Da
     return "results"; return "purchase"; }
 function shortDate(value: string) { return new Intl.DateTimeFormat("zh-TW", { month: "numeric", day: "numeric" }).format(new Date(value)); }
 function dateTimeInput(value: string) { const d = new Date(value); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); }
-function errorText(error: unknown) { return error instanceof Error ? error.message : "操作失敗，請稍後再試"; }
+function errorText(error: unknown) {
+    if (error instanceof Error)
+        return error.message;
+    if (error && typeof error === "object" && "message" in error && typeof error.message === "string")
+        return error.message;
+    return "操作失敗，請稍後再試";
+}
 function appEntryUrl() { return new URL("./", document.baseURI).href.split("#")[0]; }
 function productImageUrl(path: string | null) { return path ? supabase.storage.from("product-images").getPublicUrl(path).data.publicUrl : ""; }
 function competitionRankMap<T>(rows: T[], key: (row: T) => string, score: (row: T) => number) { const ranks = new Map<string, number>(); let previousScore: number | undefined; let currentRank = 0; rows.forEach((row, index) => { const value = score(row); if (index === 0 || value !== previousScore)
@@ -508,9 +514,6 @@ function EmployeeApp({ employee, route }: {
         const { data, error } = await supabase.rpc("add_custom_product_and_nominate", { p_campaign_id: campaign!.id, p_name: String(form.get("name")), p_category: String(form.get("category")), p_brand: String(form.get("brand") || ""), p_size: String(form.get("size") || ""), p_reference_price: form.get("reference_price") ? Number(form.get("reference_price")) : null, p_source_url: null });
         if (error)
             throw error;
-        const inherited = await supabase.rpc("inherit_product_campaign_locations", { p_product_id: data, p_campaign_id: campaign!.id });
-        if (inherited.error)
-            throw inherited.error;
         if (file && file.size > 0) {
             const path = await uploadProductImage(file, employee.id);
             const attached = await supabase.rpc("set_product_image", { p_product_id: data, p_image_path: path });
@@ -524,7 +527,7 @@ function EmployeeApp({ employee, route }: {
     }
     catch (error) {
         const text = errorText(error);
-        notify(text.startsWith("DUPLICATE_PRODUCT") ? "商品庫已有相同品項，請直接提名既有商品" : text);
+        notify(text.includes("DUPLICATE_PRODUCT") ? "商品庫已有相同品項，請直接提名既有商品" : text.includes("CAMPAIGN_LOCATION_REQUIRED") ? "本期活動尚未設定適用地點，請聯絡管理員完成活動地點設定" : text);
     } }
     async function addComment(productId: string) { const body = (commentDrafts[productId] ?? "").trim(); if (!body)
         return; const previous = comments; const optimistic: Comment = { id: `optimistic-${crypto.randomUUID()}`, campaign_id: campaign!.id, product_id: productId, employee_id: employee.id, author_name: employee.name, body, created_at: new Date().toISOString() }; setComments([...comments, optimistic]); setCommentDrafts(x => ({ ...x, [productId]: "" })); const { error } = await supabase.from("comments").insert({ campaign_id: campaign!.id, product_id: productId, employee_id: employee.id, author_name: employee.name, body }); if (error) {
@@ -818,9 +821,44 @@ function AdminApp({ employee }: {
     finally {
         setBusy(false);
     } }
-    async function reviewProduct(product: Product, decision: "approved" | "rejected") { if (decision === "rejected" && !await askConfirm({ title: `退回「${product.name}」`, items: [`相關提名與固定票會立即移除。`, `受影響同仁的提名名額與票數會自動返還。`], confirmLabel: "確認退回", danger: true }))
-        return; const { data, error } = await supabase.rpc("review_product", { p_product_id: product.id, p_decision: decision }); if (error)
-        return flash(error.message); flash(decision === "approved" ? "商品已核准並加入商品庫" : `商品已退回，已返還 ${data ?? 0} 筆提名與固定票`); await load(); }
+    async function savePendingProductLocations(product: Product, locationIds: string[]) {
+        if (!locationIds.length) {
+            flash("請至少選擇一個商品適用地點");
+            return false;
+        }
+        setBusy(true);
+        const { error } = await supabase.rpc("set_product_locations", { p_product_id: product.id, p_location_ids: locationIds });
+        setBusy(false);
+        if (error) {
+            flash(error.message);
+            return false;
+        }
+        flash("待審商品的適用地點已更新");
+        await load();
+        return true;
+    }
+    async function reviewProduct(product: Product, decision: "approved" | "rejected", locationIds?: string[]) {
+        if (decision === "rejected" && !await askConfirm({ title: `退回「${product.name}」`, items: [`相關提名與固定票會立即移除。`, `受影響同仁的提名名額與票數會自動返還。`], confirmLabel: "確認退回", danger: true }))
+            return;
+        if (decision === "approved" && locationIds) {
+            const currentIds = productLocations.filter(row => row.product_id === product.id).map(row => row.work_location_id).sort();
+            const nextIds = [...locationIds].sort();
+            if (!nextIds.length)
+                return flash("請至少選擇一個商品適用地點，再核准商品");
+            if (currentIds.join("|") !== nextIds.join("|")) {
+                const saved = await savePendingProductLocations(product, nextIds);
+                if (!saved)
+                    return;
+            }
+        }
+        setBusy(true);
+        const { data, error } = await supabase.rpc("review_product", { p_product_id: product.id, p_decision: decision });
+        setBusy(false);
+        if (error)
+            return flash(error.message.includes("PRODUCT_LOCATION_REQUIRED") ? "請先設定至少一個商品適用地點，再核准商品" : error.message);
+        flash(decision === "approved" ? "商品已核准並加入商品庫" : `商品已退回，已返還 ${data ?? 0} 筆提名與固定票`);
+        await load();
+    }
     function editProduct(product: Product) { setEditingProduct(product); }
     async function saveEditedProduct(form: FormData, image: File | null) { if (!editingProduct)
         return; try {
@@ -906,7 +944,7 @@ function AdminApp({ employee }: {
     {tab === "locations" && <WorkLocationManager locations={workLocations} employeeLocations={employeeLocations} campaignLocations={campaignLocations} productLocations={productLocations} onAdd={addLocation} onRename={renameLocation} onDelete={deleteLocation} onToggle={toggleLocation}/>} 
 {tab === "products" && <>
       <CategoryManager categories={productCategories} products={catalogProducts} nominations={nominations} votes={votes} currentCampaigns={campaigns.filter(c => c.status === "active")} busy={busy} onAdd={addCategory} onRename={renameCategory} onDelete={deleteCategory}/>
-      <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div><button className="seed-button" disabled={busy} onClick={addStarterProducts}>一鍵加入 39 項基礎商品</button></div>
+      <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div><button className="seed-button" disabled={busy} onClick={addStarterProducts}>一鍵加入 {starterProducts.length} 項基礎商品</button></div>
         <form className="product-form product-form-with-image multi-location-form" onSubmit={addProduct}>
           <input name="brand" placeholder="品牌（可空白）"/><input required name="name" placeholder="商品名稱"/>
           <select required name="category" defaultValue=""><option value="" disabled>選擇分類</option>{productCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
@@ -923,12 +961,47 @@ function AdminApp({ employee }: {
         })}</tbody></table></div>
       </section>
     </>}
-    {tab === "pending" && <section className="admin-card"><div className="card-title"><div><p className="section-kicker">PRODUCT REVIEW</p><h2>同仁新增商品審核</h2></div><span className="count-tag">{pending.length} 項</span></div>{pending.length ? <div className="review-grid">{pending.map(p => <article key={p.id}>{p.image_path ? <img className="review-image" src={productImageUrl(p.image_path)} alt={p.name}/> : <div className="review-icon">{icons[p.category] ?? "✦"}</div>}<div><span>{p.category} · {p.brand || "未填品牌"}</span><h3>{p.name}</h3><p>{p.size || "未填規格"} · {p.reference_price == null ? "價格待確認" : `參考 NT$ ${p.reference_price}`}</p><p><b>適用地點：</b>{locationNames(productLocations.filter(row => row.product_id === p.id).map(row => row.work_location_id), workLocations)}</p><p className="review-submitter"><b>新增同仁</b><span>{p.created_by ? (employees.find(x => x.id === p.created_by)?.name ?? "原新增者已不在名單") : "未記錄"}</span></p></div><div className="review-actions"><button className="approve" onClick={() => reviewProduct(p, "approved")}>核准</button><button onClick={() => reviewProduct(p, "rejected")}>退回並返還票數</button></div></article>)}</div> : <div className="admin-empty">目前沒有待審商品。</div>}</section>}
+    {tab === "pending" && <section className="admin-card"><div className="card-title"><div><p className="section-kicker">PRODUCT REVIEW</p><h2>同仁新增商品審核</h2></div><span className="count-tag">{pending.length} 項</span></div>{pending.length ? <div className="review-grid">{pending.map(p => <PendingProductReviewCard key={p.id} product={p} submitterName={p.created_by ? (employees.find(x => x.id === p.created_by)?.name ?? "原新增者已不在名單") : "未記錄"} locations={workLocations} selectedLocationIds={productLocations.filter(row => row.product_id === p.id).map(row => row.work_location_id)} busy={busy} onEdit={() => editProduct(p)} onSaveLocations={ids => savePendingProductLocations(p, ids)} onReview={(decision, ids) => reviewProduct(p, decision, ids)}/>)}</div> : <div className="admin-empty">目前沒有待審商品。</div>}</section>}
     {tab === "purchase" && <><PurchaseCampaignSwitcher campaigns={purchaseCampaigns} selected={purchaseCampaign} locations={workLocations} campaignLocations={campaignLocations} purchases={purchases} onSelect={setPurchaseCampaignId}/><PurchasePanel campaign={purchaseCampaign} products={products} purchases={purchases} busy={busy} onGenerate={generatePurchase} onUpdate={updatePurchase} onSetLocked={setPurchasePlanLocked} onUpdateArrival={updateExpectedArrival}/></>} 
     {tab === "budget" && <BudgetReportPanel campaigns={campaigns} locations={workLocations} purchases={purchases} products={products} votes={votes}/>} 
     {tab === "feedback" && <FeedbackAdminPanel submissions={feedbackSubmissions} onRead={markFeedbackRead} onReply={replyFeedback}/>} 
     {tab === "history" && <HistoryPanel campaigns={campaigns} locations={workLocations} products={products} nominations={nominations} votes={votes} comments={comments} purchases={purchases} onEdit={campaign => { setEditingCampaign(campaign); setSelectedCampaignId(campaign.id); setNewCampaign(false); setTab("campaign"); }} onDelete={forceDeleteCampaign}/>} 
   </div></section>{editingProduct && <ProductEditor product={editingProduct} categories={productCategories} locations={workLocations} selectedLocationIds={productLocations.filter(row => row.product_id === editingProduct.id).map(row => row.work_location_id)} busy={busy} onClose={() => setEditingProduct(null)} onSave={saveEditedProduct}/>} {confirmElement}</main>;
+}
+function PendingProductReviewCard({ product, submitterName, locations, selectedLocationIds, busy, onEdit, onSaveLocations, onReview }: {
+    product: Product;
+    submitterName: string;
+    locations: WorkLocation[];
+    selectedLocationIds: string[];
+    busy: boolean;
+    onEdit: () => void;
+    onSaveLocations: (ids: string[]) => Promise<boolean>;
+    onReview: (decision: "approved" | "rejected", ids: string[]) => void;
+}) {
+    const [locationIds, setLocationIds] = useState(selectedLocationIds);
+    useEffect(() => setLocationIds(selectedLocationIds), [selectedLocationIds.join("|")]);
+    const normalizedCurrent = [...selectedLocationIds].sort().join("|");
+    const normalizedDraft = [...locationIds].sort().join("|");
+    const locationChanged = normalizedCurrent !== normalizedDraft;
+    return <article className="pending-review-card">
+      {product.image_path ? <img className="review-image" src={productImageUrl(product.image_path)} alt={product.name}/> : <div className="review-icon">{icons[product.category] ?? "✦"}</div>}
+      <div className="pending-review-content">
+        <span>{product.category} · {product.brand || "未填品牌"}</span>
+        <h3>{product.name}</h3>
+        <p>{product.size || "未填規格"} · {product.reference_price == null ? "價格待確認" : `參考 NT$ ${product.reference_price}`}</p>
+        <p className="review-submitter"><b>新增同仁</b><span>{submitterName}</span></p>
+        <div className="pending-location-editor">
+          <div><b>適用地點</b><small>預設繼承此次活動；核准前可直接調整</small></div>
+          <LocationPicker locations={locations} selected={locationIds} onChange={setLocationIds} name={`pending_locations_${product.id}`}/>
+          <button type="button" disabled={busy || !locationChanged || !locationIds.length} onClick={() => void onSaveLocations(locationIds)}>{locationChanged ? "儲存地點" : "地點已儲存"}</button>
+        </div>
+      </div>
+      <div className="review-actions">
+        <button type="button" onClick={onEdit}>編輯完整資料</button>
+        <button type="button" className="approve" disabled={busy || !locationIds.length} onClick={() => onReview("approved", locationIds)}>{locationChanged ? "儲存地點並核准" : "核准"}</button>
+        <button type="button" disabled={busy} onClick={() => onReview("rejected", locationIds)}>退回並返還票數</button>
+      </div>
+    </article>;
 }
 function phaseLabel(phase: Phase) { return ({ upcoming: "尚未開始", nomination: "提名階段", voting: "投票階段", results: "結果揭曉", purchase: "安排採購" })[phase]; }
 function DateTime24Field({ name, label, value }: {
