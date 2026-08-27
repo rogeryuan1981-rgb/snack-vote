@@ -813,6 +813,36 @@ function AdminApp({ employee }: {
         flash(success);
         await load();
     } }
+    async function deleteUnusedProduct(product: Product) {
+        const nominated = nominations.some(row => row.product_id === product.id);
+        const voted = votes.some(row => row.product_id === product.id);
+        if (nominated || voted)
+            return flash("此商品已有提名或投票紀錄，只能停用，不能永久刪除");
+        if (!await askConfirm({
+            title: `永久刪除「${product.name}」？`,
+            items: ["此商品從未被提名或投票，可以永久刪除。", "商品資料、適用地點、按讚／倒讚與商品圖片將一併移除，刪除後無法復原。"],
+            confirmLabel: "永久刪除",
+            danger: true
+        }))
+            return;
+        setBusy(true);
+        const { error } = await supabase.from("products").delete().eq("id", product.id);
+        if (error) {
+            setBusy(false);
+            if (error.code === "23503" || error.message.toLowerCase().includes("foreign key"))
+                return flash("此商品已有活動紀錄，只能停用，不能永久刪除");
+            return flash(error.message);
+        }
+        let imageCleanupFailed = false;
+        if (product.image_path) {
+            const removed = await supabase.storage.from("product-images").remove([product.image_path]);
+            imageCleanupFailed = Boolean(removed.error);
+        }
+        setBusy(false);
+        setEditingProduct(current => current?.id === product.id ? null : current);
+        flash(imageCleanupFailed ? "商品已永久刪除；原商品圖片未能清除，請稍後至 Storage 檢查" : `已永久刪除「${product.name}」`);
+        await load();
+    }
     async function replaceProductImage(product: Product, file: File) { try {
         setBusy(true);
         const path = await uploadProductImage(file, employee.id);
@@ -964,7 +994,8 @@ function AdminApp({ employee }: {
       <section className="admin-card"><div className="card-title"><div><p className="section-kicker">PRODUCT CATALOG</p><h2>商品資料庫</h2></div><span className="count-tag">{catalogProducts.length} 項</span></div>
         <div className="table-wrap"><table><thead><tr><th>圖片</th><th>商品</th><th>分類</th><th>適用地點</th><th>參考價</th><th>來源</th><th>狀態</th><th>操作</th></tr></thead><tbody>{catalogProducts.filter(p => p.approval_status !== "pending").map(p => {
           const ids = productLocations.filter(row => row.product_id === p.id).map(row => row.work_location_id);
-          return <tr key={p.id}><td>{p.image_path ? <img className="product-thumb" src={productImageUrl(p.image_path)} alt=""/> : <span className="thumb-placeholder">{icons[p.category] ?? "✦"}</span>}</td><td><strong>{p.brand} {p.name}</strong><small className="cell-sub">{p.size || "未填規格"}</small></td><td>{p.category}</td><td>{locationNames(ids, workLocations)}</td><td>{p.reference_price == null ? "待確認" : `NT$ ${p.reference_price}`}</td><td>{p.origin === "employee" ? "同仁新增" : "商品庫"}</td><td><span className={p.active ? "active-dot" : "inactive-dot"}>{p.active ? "啟用" : "停用"}</span></td><td><button className="table-action" onClick={() => editProduct(p)}>修改</button><label className="table-upload">換圖<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => { const file = e.target.files?.[0]; if (file) void replaceProductImage(p, file); }}/></label><button className="table-action" onClick={() => updateProduct(p.id, { active: !p.active }, p.active ? "商品已停用" : "商品已重新啟用")}>{p.active ? "停用" : "啟用"}</button></td></tr>;
+          const canDelete = !nominations.some(row => row.product_id === p.id) && !votes.some(row => row.product_id === p.id);
+          return <tr key={p.id}><td>{p.image_path ? <img className="product-thumb" src={productImageUrl(p.image_path)} alt=""/> : <span className="thumb-placeholder">{icons[p.category] ?? "✦"}</span>}</td><td><strong>{p.brand} {p.name}</strong><small className="cell-sub">{p.size || "未填規格"}</small></td><td>{p.category}</td><td>{locationNames(ids, workLocations)}</td><td>{p.reference_price == null ? "待確認" : `NT$ ${p.reference_price}`}</td><td>{p.origin === "employee" ? "同仁新增" : "商品庫"}</td><td><span className={p.active ? "active-dot" : "inactive-dot"}>{p.active ? "啟用" : "停用"}</span></td><td><div className="product-row-actions"><button className="table-action" onClick={() => editProduct(p)}>修改</button><label className="table-upload">換圖<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={e => { const file = e.target.files?.[0]; if (file) void replaceProductImage(p, file); }}/></label><button className="table-action" onClick={() => updateProduct(p.id, { active: !p.active }, p.active ? "商品已停用" : "商品已重新啟用")}>{p.active ? "停用" : "啟用"}</button>{canDelete && <button className="table-action danger" disabled={busy} onClick={() => void deleteUnusedProduct(p)}>永久刪除</button>}</div></td></tr>;
         })}</tbody></table></div>
       </section>
     </>}
