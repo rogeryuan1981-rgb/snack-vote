@@ -377,13 +377,20 @@ function EmployeeApp({ employee, route }: {
     const load = useCallback(async (silent = false) => {
         if (!silent)
             setBusy(true);
-        const [{ data: c }, { data: myMemberships }] = await Promise.all([supabase.from("campaigns").select("*").neq("status", "draft").order("start_at", { ascending: false }), supabase.from("campaign_members").select("campaign_id,active").eq("employee_id", employee.id)]);
+        const [{ data: c }, { data: myMemberships }, { data: reviewablePurchaseRows }] = await Promise.all([
+            supabase.from("campaigns").select("*").neq("status", "draft").order("start_at", { ascending: false }),
+            supabase.from("campaign_members").select("campaign_id,active").eq("employee_id", employee.id),
+            supabase.from("purchase_items").select("campaign_id,purchased,final_quantity,suggested_quantity").eq("purchased", true)
+        ]);
         const accessibleIds = new Set((myMemberships ?? []).filter(row => row.active).map(row => row.campaign_id));
         const all = ((c ?? []) as Campaign[]).filter(row => accessibleIds.has(row.id));
         const now = Date.now();
         const activeCampaigns = all.filter(x => x.status === "active");
         const current = activeCampaigns.find(x => x.id === selectedEmployeeCampaignId) ?? activeCampaigns.find(x => +new Date(x.start_at) <= now) ?? activeCampaigns[0] ?? null;
-        const history = all.filter(x => !activeCampaigns.some(active => active.id === x.id) && +new Date(x.start_at) <= now).slice(0, 3);
+        const purchasedCampaignIds = new Set(((reviewablePurchaseRows ?? []) as Pick<PurchaseItem, "campaign_id" | "purchased" | "final_quantity" | "suggested_quantity">[])
+            .filter(row => accessibleIds.has(row.campaign_id) && row.purchased && Number(row.final_quantity ?? row.suggested_quantity) > 0)
+            .map(row => row.campaign_id));
+        const history = all.filter(x => +new Date(x.start_at) <= now && (x.status !== "active" || purchasedCampaignIds.has(x.id))).slice(0, 3);
         setAvailableCampaigns(activeCampaigns);
         setCampaign(current);
         setHistoryCampaigns(history);
@@ -446,7 +453,7 @@ function EmployeeApp({ employee, route }: {
         notify(result.error.message);
     } }
     if (route.startsWith("#/history"))
-        return <ShellHeader employee={employee} currentPage="history"><EmployeePageIntro kicker="RECENT ACTIVITY" title="近三期活動回顧" description="集中查看過去的投票結果、實際採購與同仁心得，不干擾本期提名與投票。"/><EmployeeActivityHistory standalone employee={employee} campaigns={historyCampaigns} products={historyProducts} nominations={historyNominations} votes={historyVotes} purchases={historyPurchases} reviews={purchaseReviews} reactions={productReactions} onToggleReaction={toggleProductReaction} onSaveReview={savePurchaseReview} onDeleteReview={deletePurchaseReview}/>{toast && <div className="toast">{toast}</div>}{confirmElement}</ShellHeader>;
+        return <ShellHeader employee={employee} currentPage="history"><EmployeePageIntro kicker="RECENT ACTIVITY" title="近三期活動回顧" description="集中查看最近已有結果或已採購商品的活動與同仁心得，不必等待活動封存。"/><EmployeeActivityHistory standalone employee={employee} campaigns={historyCampaigns} products={historyProducts} nominations={historyNominations} votes={historyVotes} purchases={historyPurchases} reviews={purchaseReviews} reactions={productReactions} onToggleReaction={toggleProductReaction} onSaveReview={savePurchaseReview} onDeleteReview={deletePurchaseReview}/>{toast && <div className="toast">{toast}</div>}{confirmElement}</ShellHeader>;
     if (route.startsWith("#/feedback"))
         return <ShellHeader employee={employee} currentPage="feedback"><EmployeePageIntro kicker="YOUR FEEDBACK" title="使用意見與改善建議" description="各階段滿意度與修改建議集中在這裡，也能追蹤管理者是否閱讀及回覆。"/><EmployeeFeedbackPanel employee={employee}/></ShellHeader>;
     if (!campaign)
@@ -584,7 +591,7 @@ function EmployeeActivityHistory({ standalone = false, employee, campaigns, prod
     const progress = plannedRows.length ? Math.round(purchasedRows.length / plannedRows.length * 100) : 0;
     const campaignReviews = reviews.filter(row => row.campaign_id === selected.id);
     return <section id="activity-history" className="employee-history">
-    <header><div><p className="section-kicker">RECENT ACTIVITY</p><h2>最近三期活動回顧</h2><p>查看過去的投票、實際採購與同仁心得，作為下次提名參考。</p></div><span>顯示最近 {campaigns.length} 期</span></header>
+    <header><div><p className="section-kicker">RECENT ACTIVITY</p><h2>最近三期活動回顧</h2><p>查看近期投票、實際採購與同仁心得；商品標記已採購後即可評論。</p></div><span>顯示最近 {campaigns.length} 期</span></header>
     <div className="history-period-tabs">{campaigns.map(row => <button key={row.id} className={row.id === selected.id ? "active" : ""} onClick={() => setSelectedId(row.id)}><strong>{row.label}</strong><small>{shortDate(row.start_at)}－{shortDate(row.purchase_at)}</small></button>)}</div>
     <div className="history-overview"><div><span>本期預算</span><strong>NT$ {Number(selected.budget).toLocaleString()}</strong></div><div><span>實際採購</span><strong>NT$ {spent.toLocaleString()}</strong></div><div><span>採購完成度</span><strong>{progress}%</strong></div><div><span>同仁心得</span><strong>{campaignReviews.length} 則</strong></div></div>
     <div className="history-columns"><section className="history-ranking"><div className="history-panel-title"><div><small>FINAL RANKING</small><h3>最終投票結果</h3></div><span>{campaignVotes.length} 票</span></div>{ranking.length ? ranking.map(row => { const product = products.find(item => item.id === row.id); const purchase = purchases.find(item => item.campaign_id === selected.id && item.product_id === row.id && Number(item.final_quantity ?? item.suggested_quantity) > 0); const voters = campaignVotes.filter(item => item.product_id === row.id).map(item => item.voter_name); return <article key={row.id}><b>第 {ranks.get(row.id)} 名</b><div><strong>{product ? `${product.brand} ${product.name}` : "商品資料已移除"}</strong><small>投票者：{voters.join("、")}</small><ProductReactionControls productId={row.id} employeeId={employee.id} reactions={reactions} onToggle={onToggleReaction}/></div><span>{row.count} 票</span>{purchase && <em>{purchase.purchased ? `已購買 ${purchase.final_quantity ?? purchase.suggested_quantity} 份` : "列入清單"}</em>}</article>; }) : <div className="history-empty">本期沒有投票資料。</div>}</section>
