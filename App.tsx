@@ -154,7 +154,7 @@ type PurchaseItem = {
 };
 type Phase = "upcoming" | "nomination" | "voting" | "results" | "purchase";
 type ProductSort = "smart" | "votes" | "name" | "price-asc" | "price-desc";
-const icons: Record<string, string> = { 洋芋片: "◒", 餅乾: "▦", 巧克力: "◆", 糖果果凍: "●", 米果: "❋", 堅果果乾: "♧", 海苔肉乾: "▤", 飲料: "◫" };
+const icons: Record<string, string> = { 堅果: "♧", 巧克力: "◆", 洋芋片: "◒", 米果: "❋", 糖果: "●", 餅乾: "▦", 海苔肉乾: "▤" };
 const tones = ["tone-1", "tone-2", "tone-3", "tone-4", "tone-5", "tone-6"];
 function phaseOf(c: Campaign): Phase { const now = Date.now(); if (now < +new Date(c.start_at))
     return "upcoming"; if (now < +new Date(c.nomination_deadline))
@@ -377,13 +377,20 @@ function EmployeeApp({ employee, route }: {
     const load = useCallback(async (silent = false) => {
         if (!silent)
             setBusy(true);
-        const [{ data: c }, { data: myMemberships }] = await Promise.all([supabase.from("campaigns").select("*").neq("status", "draft").order("start_at", { ascending: false }), supabase.from("campaign_members").select("campaign_id,active").eq("employee_id", employee.id)]);
+        const [{ data: c }, { data: myMemberships }, { data: reviewablePurchaseRows }] = await Promise.all([
+            supabase.from("campaigns").select("*").neq("status", "draft").order("start_at", { ascending: false }),
+            supabase.from("campaign_members").select("campaign_id,active").eq("employee_id", employee.id),
+            supabase.from("purchase_items").select("campaign_id,purchased,final_quantity,suggested_quantity").eq("purchased", true)
+        ]);
         const accessibleIds = new Set((myMemberships ?? []).filter(row => row.active).map(row => row.campaign_id));
         const all = ((c ?? []) as Campaign[]).filter(row => accessibleIds.has(row.id));
         const now = Date.now();
         const activeCampaigns = all.filter(x => x.status === "active");
         const current = activeCampaigns.find(x => x.id === selectedEmployeeCampaignId) ?? activeCampaigns.find(x => +new Date(x.start_at) <= now) ?? activeCampaigns[0] ?? null;
-        const history = all.filter(x => !activeCampaigns.some(active => active.id === x.id) && +new Date(x.start_at) <= now).slice(0, 3);
+        const purchasedCampaignIds = new Set(((reviewablePurchaseRows ?? []) as Pick<PurchaseItem, "campaign_id" | "purchased" | "final_quantity" | "suggested_quantity">[])
+            .filter(row => accessibleIds.has(row.campaign_id) && row.purchased && Number(row.final_quantity ?? row.suggested_quantity) > 0)
+            .map(row => row.campaign_id));
+        const history = all.filter(x => +new Date(x.start_at) <= now && (x.status !== "active" || purchasedCampaignIds.has(x.id))).slice(0, 3);
         setAvailableCampaigns(activeCampaigns);
         setCampaign(current);
         setHistoryCampaigns(history);
@@ -446,7 +453,7 @@ function EmployeeApp({ employee, route }: {
         notify(result.error.message);
     } }
     if (route.startsWith("#/history"))
-        return <ShellHeader employee={employee} currentPage="history"><EmployeePageIntro kicker="RECENT ACTIVITY" title="近三期活動回顧" description="集中查看過去的投票結果、實際採購與同仁心得，不干擾本期提名與投票。"/><EmployeeActivityHistory standalone employee={employee} campaigns={historyCampaigns} products={historyProducts} nominations={historyNominations} votes={historyVotes} purchases={historyPurchases} reviews={purchaseReviews} reactions={productReactions} onToggleReaction={toggleProductReaction} onSaveReview={savePurchaseReview} onDeleteReview={deletePurchaseReview}/>{toast && <div className="toast">{toast}</div>}{confirmElement}</ShellHeader>;
+        return <ShellHeader employee={employee} currentPage="history"><EmployeePageIntro kicker="RECENT ACTIVITY" title="近三期活動回顧" description="集中查看最近已有結果或已採購商品的活動與同仁心得，不必等待活動封存。"/><EmployeeActivityHistory standalone employee={employee} campaigns={historyCampaigns} products={historyProducts} nominations={historyNominations} votes={historyVotes} purchases={historyPurchases} reviews={purchaseReviews} reactions={productReactions} onToggleReaction={toggleProductReaction} onSaveReview={savePurchaseReview} onDeleteReview={deletePurchaseReview}/>{toast && <div className="toast">{toast}</div>}{confirmElement}</ShellHeader>;
     if (route.startsWith("#/feedback"))
         return <ShellHeader employee={employee} currentPage="feedback"><EmployeePageIntro kicker="YOUR FEEDBACK" title="使用意見與改善建議" description="各階段滿意度與修改建議集中在這裡，也能追蹤管理者是否閱讀及回覆。"/><EmployeeFeedbackPanel employee={employee}/></ShellHeader>;
     if (!campaign)
@@ -584,7 +591,7 @@ function EmployeeActivityHistory({ standalone = false, employee, campaigns, prod
     const progress = plannedRows.length ? Math.round(purchasedRows.length / plannedRows.length * 100) : 0;
     const campaignReviews = reviews.filter(row => row.campaign_id === selected.id);
     return <section id="activity-history" className="employee-history">
-    <header><div><p className="section-kicker">RECENT ACTIVITY</p><h2>最近三期活動回顧</h2><p>查看過去的投票、實際採購與同仁心得，作為下次提名參考。</p></div><span>顯示最近 {campaigns.length} 期</span></header>
+    <header><div><p className="section-kicker">RECENT ACTIVITY</p><h2>最近三期活動回顧</h2><p>查看近期投票、實際採購與同仁心得；商品標記已採購後即可評論。</p></div><span>顯示最近 {campaigns.length} 期</span></header>
     <div className="history-period-tabs">{campaigns.map(row => <button key={row.id} className={row.id === selected.id ? "active" : ""} onClick={() => setSelectedId(row.id)}><strong>{row.label}</strong><small>{shortDate(row.start_at)}－{shortDate(row.purchase_at)}</small></button>)}</div>
     <div className="history-overview"><div><span>本期預算</span><strong>NT$ {Number(selected.budget).toLocaleString()}</strong></div><div><span>實際採購</span><strong>NT$ {spent.toLocaleString()}</strong></div><div><span>採購完成度</span><strong>{progress}%</strong></div><div><span>同仁心得</span><strong>{campaignReviews.length} 則</strong></div></div>
     <div className="history-columns"><section className="history-ranking"><div className="history-panel-title"><div><small>FINAL RANKING</small><h3>最終投票結果</h3></div><span>{campaignVotes.length} 票</span></div>{ranking.length ? ranking.map(row => { const product = products.find(item => item.id === row.id); const purchase = purchases.find(item => item.campaign_id === selected.id && item.product_id === row.id && Number(item.final_quantity ?? item.suggested_quantity) > 0); const voters = campaignVotes.filter(item => item.product_id === row.id).map(item => item.voter_name); return <article key={row.id}><b>第 {ranks.get(row.id)} 名</b><div><strong>{product ? `${product.brand} ${product.name}` : "商品資料已移除"}</strong><small>投票者：{voters.join("、")}</small><ProductReactionControls productId={row.id} employeeId={employee.id} reactions={reactions} onToggle={onToggleReaction}/></div><span>{row.count} 票</span>{purchase && <em>{purchase.purchased ? `已購買 ${purchase.final_quantity ?? purchase.suggested_quantity} 份` : "列入清單"}</em>}</article>; }) : <div className="history-empty">本期沒有投票資料。</div>}</section>
@@ -821,9 +828,44 @@ function AdminApp({ employee }: {
     finally {
         setBusy(false);
     } }
-    async function reviewProduct(product: Product, decision: "approved" | "rejected") { if (decision === "rejected" && !await askConfirm({ title: `退回「${product.name}」`, items: [`相關提名與固定票會立即移除。`, `受影響同仁的提名名額與票數會自動返還。`], confirmLabel: "確認退回", danger: true }))
-        return; const { data, error } = await supabase.rpc("review_product", { p_product_id: product.id, p_decision: decision }); if (error)
-        return flash(error.message.includes("PRODUCT_LOCATION_REQUIRED") ? "請先設定至少一個商品適用地點，再核准商品" : error.message); flash(decision === "approved" ? "商品已核准並加入商品庫" : `商品已退回，已返還 ${data ?? 0} 筆提名與固定票`); await load(); }
+    async function savePendingProductLocations(product: Product, locationIds: string[]) {
+        if (!locationIds.length) {
+            flash("請至少選擇一個商品適用地點");
+            return false;
+        }
+        setBusy(true);
+        const { error } = await supabase.rpc("set_product_locations", { p_product_id: product.id, p_location_ids: locationIds });
+        setBusy(false);
+        if (error) {
+            flash(error.message);
+            return false;
+        }
+        flash("待審商品的適用地點已更新");
+        await load();
+        return true;
+    }
+    async function reviewProduct(product: Product, decision: "approved" | "rejected", locationIds?: string[]) {
+        if (decision === "rejected" && !await askConfirm({ title: `退回「${product.name}」`, items: [`相關提名與固定票會立即移除。`, `受影響同仁的提名名額與票數會自動返還。`], confirmLabel: "確認退回", danger: true }))
+            return;
+        if (decision === "approved" && locationIds) {
+            const currentIds = productLocations.filter(row => row.product_id === product.id).map(row => row.work_location_id).sort();
+            const nextIds = [...locationIds].sort();
+            if (!nextIds.length)
+                return flash("請至少選擇一個商品適用地點，再核准商品");
+            if (currentIds.join("|") !== nextIds.join("|")) {
+                const saved = await savePendingProductLocations(product, nextIds);
+                if (!saved)
+                    return;
+            }
+        }
+        setBusy(true);
+        const { data, error } = await supabase.rpc("review_product", { p_product_id: product.id, p_decision: decision });
+        setBusy(false);
+        if (error)
+            return flash(error.message.includes("PRODUCT_LOCATION_REQUIRED") ? "請先設定至少一個商品適用地點，再核准商品" : error.message);
+        flash(decision === "approved" ? "商品已核准並加入商品庫" : `商品已退回，已返還 ${data ?? 0} 筆提名與固定票`);
+        await load();
+    }
     function editProduct(product: Product) { setEditingProduct(product); }
     async function saveEditedProduct(form: FormData, image: File | null) { if (!editingProduct)
         return; try {
@@ -909,7 +951,7 @@ function AdminApp({ employee }: {
     {tab === "locations" && <WorkLocationManager locations={workLocations} employeeLocations={employeeLocations} campaignLocations={campaignLocations} productLocations={productLocations} onAdd={addLocation} onRename={renameLocation} onDelete={deleteLocation} onToggle={toggleLocation}/>} 
 {tab === "products" && <>
       <CategoryManager categories={productCategories} products={catalogProducts} nominations={nominations} votes={votes} currentCampaigns={campaigns.filter(c => c.status === "active")} busy={busy} onAdd={addCategory} onRename={renameCategory} onDelete={deleteCategory}/>
-      <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div><button className="seed-button" disabled={busy} onClick={addStarterProducts}>一鍵加入 39 項基礎商品</button></div>
+      <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div><button className="seed-button" disabled={busy} onClick={addStarterProducts}>一鍵加入 {starterProducts.length} 項基礎商品</button></div>
         <form className="product-form product-form-with-image multi-location-form" onSubmit={addProduct}>
           <input name="brand" placeholder="品牌（可空白）"/><input required name="name" placeholder="商品名稱"/>
           <select required name="category" defaultValue=""><option value="" disabled>選擇分類</option>{productCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
@@ -926,12 +968,47 @@ function AdminApp({ employee }: {
         })}</tbody></table></div>
       </section>
     </>}
-    {tab === "pending" && <section className="admin-card"><div className="card-title"><div><p className="section-kicker">PRODUCT REVIEW</p><h2>同仁新增商品審核</h2></div><span className="count-tag">{pending.length} 項</span></div>{pending.length ? <div className="review-grid">{pending.map(p => <article key={p.id}>{p.image_path ? <img className="review-image" src={productImageUrl(p.image_path)} alt={p.name}/> : <div className="review-icon">{icons[p.category] ?? "✦"}</div>}<div><span>{p.category} · {p.brand || "未填品牌"}</span><h3>{p.name}</h3><p>{p.size || "未填規格"} · {p.reference_price == null ? "價格待確認" : `參考 NT$ ${p.reference_price}`}</p><p><b>適用地點：</b>{locationNames(productLocations.filter(row => row.product_id === p.id).map(row => row.work_location_id), workLocations)}</p><p className="review-submitter"><b>新增同仁</b><span>{p.created_by ? (employees.find(x => x.id === p.created_by)?.name ?? "原新增者已不在名單") : "未記錄"}</span></p></div><div className="review-actions"><button onClick={() => editProduct(p)}>調整資料與地點</button><button className="approve" onClick={() => reviewProduct(p, "approved")}>核准</button><button onClick={() => reviewProduct(p, "rejected")}>退回並返還票數</button></div></article>)}</div> : <div className="admin-empty">目前沒有待審商品。</div>}</section>}
+    {tab === "pending" && <section className="admin-card"><div className="card-title"><div><p className="section-kicker">PRODUCT REVIEW</p><h2>同仁新增商品審核</h2></div><span className="count-tag">{pending.length} 項</span></div>{pending.length ? <div className="review-grid">{pending.map(p => <PendingProductReviewCard key={p.id} product={p} submitterName={p.created_by ? (employees.find(x => x.id === p.created_by)?.name ?? "原新增者已不在名單") : "未記錄"} locations={workLocations} selectedLocationIds={productLocations.filter(row => row.product_id === p.id).map(row => row.work_location_id)} busy={busy} onEdit={() => editProduct(p)} onSaveLocations={ids => savePendingProductLocations(p, ids)} onReview={(decision, ids) => reviewProduct(p, decision, ids)}/>)}</div> : <div className="admin-empty">目前沒有待審商品。</div>}</section>}
     {tab === "purchase" && <><PurchaseCampaignSwitcher campaigns={purchaseCampaigns} selected={purchaseCampaign} locations={workLocations} campaignLocations={campaignLocations} purchases={purchases} onSelect={setPurchaseCampaignId}/><PurchasePanel campaign={purchaseCampaign} products={products} purchases={purchases} busy={busy} onGenerate={generatePurchase} onUpdate={updatePurchase} onSetLocked={setPurchasePlanLocked} onUpdateArrival={updateExpectedArrival}/></>} 
     {tab === "budget" && <BudgetReportPanel campaigns={campaigns} locations={workLocations} purchases={purchases} products={products} votes={votes}/>} 
     {tab === "feedback" && <FeedbackAdminPanel submissions={feedbackSubmissions} onRead={markFeedbackRead} onReply={replyFeedback}/>} 
     {tab === "history" && <HistoryPanel campaigns={campaigns} locations={workLocations} products={products} nominations={nominations} votes={votes} comments={comments} purchases={purchases} onEdit={campaign => { setEditingCampaign(campaign); setSelectedCampaignId(campaign.id); setNewCampaign(false); setTab("campaign"); }} onDelete={forceDeleteCampaign}/>} 
   </div></section>{editingProduct && <ProductEditor product={editingProduct} categories={productCategories} locations={workLocations} selectedLocationIds={productLocations.filter(row => row.product_id === editingProduct.id).map(row => row.work_location_id)} busy={busy} onClose={() => setEditingProduct(null)} onSave={saveEditedProduct}/>} {confirmElement}</main>;
+}
+function PendingProductReviewCard({ product, submitterName, locations, selectedLocationIds, busy, onEdit, onSaveLocations, onReview }: {
+    product: Product;
+    submitterName: string;
+    locations: WorkLocation[];
+    selectedLocationIds: string[];
+    busy: boolean;
+    onEdit: () => void;
+    onSaveLocations: (ids: string[]) => Promise<boolean>;
+    onReview: (decision: "approved" | "rejected", ids: string[]) => void;
+}) {
+    const [locationIds, setLocationIds] = useState(selectedLocationIds);
+    useEffect(() => setLocationIds(selectedLocationIds), [selectedLocationIds.join("|")]);
+    const normalizedCurrent = [...selectedLocationIds].sort().join("|");
+    const normalizedDraft = [...locationIds].sort().join("|");
+    const locationChanged = normalizedCurrent !== normalizedDraft;
+    return <article className="pending-review-card">
+      {product.image_path ? <img className="review-image" src={productImageUrl(product.image_path)} alt={product.name}/> : <div className="review-icon">{icons[product.category] ?? "✦"}</div>}
+      <div className="pending-review-content">
+        <span>{product.category} · {product.brand || "未填品牌"}</span>
+        <h3>{product.name}</h3>
+        <p>{product.size || "未填規格"} · {product.reference_price == null ? "價格待確認" : `參考 NT$ ${product.reference_price}`}</p>
+        <p className="review-submitter"><b>新增同仁</b><span>{submitterName}</span></p>
+        <div className="pending-location-editor">
+          <div><b>適用地點</b><small>預設繼承此次活動；核准前可直接調整</small></div>
+          <LocationPicker locations={locations} selected={locationIds} onChange={setLocationIds} name={`pending_locations_${product.id}`}/>
+          <button type="button" disabled={busy || !locationChanged || !locationIds.length} onClick={() => void onSaveLocations(locationIds)}>{locationChanged ? "儲存地點" : "地點已儲存"}</button>
+        </div>
+      </div>
+      <div className="review-actions">
+        <button type="button" onClick={onEdit}>編輯完整資料</button>
+        <button type="button" className="approve" disabled={busy || !locationIds.length} onClick={() => onReview("approved", locationIds)}>{locationChanged ? "儲存地點並核准" : "核准"}</button>
+        <button type="button" disabled={busy} onClick={() => onReview("rejected", locationIds)}>退回並返還票數</button>
+      </div>
+    </article>;
 }
 function phaseLabel(phase: Phase) { return ({ upcoming: "尚未開始", nomination: "提名階段", voting: "投票階段", results: "結果揭曉", purchase: "安排採購" })[phase]; }
 function DateTime24Field({ name, label, value }: {
