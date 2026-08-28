@@ -301,6 +301,33 @@
   white-space: nowrap;
 }
 
+.history-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+}
+
+.history-context p {
+  margin: 0;
+  color: #c7d7d0;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.history-context span {
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .07);
+  color: #dce8e3;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .history-period-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -603,6 +630,11 @@
   .history-period-tabs,
   .history-overview {
     grid-template-columns: 1fr;
+  }
+
+  .history-context {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
