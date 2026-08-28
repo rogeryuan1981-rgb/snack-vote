@@ -140,6 +140,20 @@ type FeedbackSubmission = {
     created_at: string;
     updated_at: string;
 };
+type CampaignNotificationDelivery = {
+    id: string;
+    campaign_id: string;
+    employee_id: string;
+    recipient_name: string;
+    recipient_email: string;
+    status: "pending" | "sent" | "failed";
+    sent_by: string | null;
+    sent_by_name: string;
+    sent_at: string | null;
+    last_attempt_at: string;
+    attempt_count: number;
+    error_message: string | null;
+};
 type PurchaseItem = {
     id: string;
     campaign_id: string;
@@ -675,12 +689,14 @@ function AdminApp({ employee }: {
     const [comments, setComments] = useState<Comment[]>([]);
     const [purchases, setPurchases] = useState<PurchaseItem[]>([]);
     const [feedbackSubmissions, setFeedbackSubmissions] = useState<FeedbackSubmission[]>([]);
+    const [campaignNotifications, setCampaignNotifications] = useState<CampaignNotificationDelivery[]>([]);
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [employeeLocationIds, setEmployeeLocationIds] = useState<string[]>([]);
     const [message, setMessage] = useState("");
     const [busy, setBusy] = useState(false);
     const [emailingEmployeeId, setEmailingEmployeeId] = useState<string | null>(null);
+    const [notifyingCampaignId, setNotifyingCampaignId] = useState<string | null>(null);
     const [sentEmployeeIds, setSentEmployeeIds] = useState<Set<string>>(() => new Set());
     const [newCampaign, setNewCampaign] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -692,7 +708,7 @@ function AdminApp({ employee }: {
     const purchaseCampaigns = campaigns.filter(c => { if (c.status === "draft")
         return false; const rows = purchases.filter(row => row.campaign_id === c.id && Number(row.final_quantity ?? row.suggested_quantity) > 0); return c.status === "active" || (rows.length > 0 && !rows.every(row => row.purchased)) || c.id === purchaseCampaignId; }).sort((a, b) => { const aRows = purchases.filter(row => row.campaign_id === a.id && Number(row.final_quantity ?? row.suggested_quantity) > 0); const bRows = purchases.filter(row => row.campaign_id === b.id && Number(row.final_quantity ?? row.suggested_quantity) > 0); const aPending = aRows.length > 0 && !aRows.every(row => row.purchased); const bPending = bRows.length > 0 && !bRows.every(row => row.purchased); return Number(bPending) - Number(aPending) || +new Date(a.purchase_at) - +new Date(b.purchase_at); });
     const purchaseCampaign = campaigns.find(c => c.id === purchaseCampaignId) ?? purchaseCampaigns[0] ?? campaigns.find(c => c.status !== "draft") ?? null;
-    const load = useCallback(async () => { const [{ data: e }, { data: l }, { data: el }, { data: cl }, { data: pl }, { data: c }, { data: m }, { data: p }, { data: ca }, { data: n }, { data: v }, { data: co }, { data: pi }, { data: fb }] = await Promise.all([supabase.from("employees").select("id,user_id,name,email,role,active,work_location_id").order("name"), supabase.from("work_locations").select("id,name,active").order("name"), supabase.from("employee_work_locations").select("employee_id,work_location_id"), supabase.from("campaign_work_locations").select("campaign_id,work_location_id"), supabase.from("product_work_locations").select("product_id,work_location_id"), supabase.from("campaigns").select("*").order("start_at", { ascending: false }), supabase.from("campaign_members").select("*").order("name_snapshot"), supabase.from("products").select("*").order("category"), supabase.from("product_categories").select("id,name,sort_order").order("sort_order").order("name"), supabase.from("nominations").select("*").order("created_at"), supabase.from("votes").select("*").order("created_at"), supabase.from("comments").select("*").is("deleted_at", null).order("created_at"), supabase.from("purchase_items").select("*").order("rank"), supabase.from("feedback_submissions").select("*").order("created_at", { ascending: false })]); setEmployees((e ?? []) as Employee[]); setWorkLocations((l ?? []) as WorkLocation[]); setEmployeeLocations((el ?? []) as EmployeeLocation[]); setCampaignLocations((cl ?? []) as CampaignLocation[]); setProductLocations((pl ?? []) as ProductLocation[]); setCampaigns((c ?? []) as Campaign[]); setMembers((m ?? []) as CampaignMember[]); setProducts((p ?? []) as Product[]); setProductCategories((ca ?? []) as ProductCategory[]); setNominations((n ?? []) as Nomination[]); setVotes((v ?? []) as Vote[]); setComments((co ?? []) as Comment[]); setPurchases((pi ?? []) as PurchaseItem[]); setFeedbackSubmissions((fb ?? []) as FeedbackSubmission[]); }, []);
+    const load = useCallback(async () => { const [{ data: e }, { data: l }, { data: el }, { data: cl }, { data: pl }, { data: c }, { data: m }, { data: p }, { data: ca }, { data: n }, { data: v }, { data: co }, { data: pi }, { data: fb }, { data: cn }] = await Promise.all([supabase.from("employees").select("id,user_id,name,email,role,active,work_location_id").order("name"), supabase.from("work_locations").select("id,name,active").order("name"), supabase.from("employee_work_locations").select("employee_id,work_location_id"), supabase.from("campaign_work_locations").select("campaign_id,work_location_id"), supabase.from("product_work_locations").select("product_id,work_location_id"), supabase.from("campaigns").select("*").order("start_at", { ascending: false }), supabase.from("campaign_members").select("*").order("name_snapshot"), supabase.from("products").select("*").order("category"), supabase.from("product_categories").select("id,name,sort_order").order("sort_order").order("name"), supabase.from("nominations").select("*").order("created_at"), supabase.from("votes").select("*").order("created_at"), supabase.from("comments").select("*").is("deleted_at", null).order("created_at"), supabase.from("purchase_items").select("*").order("rank"), supabase.from("feedback_submissions").select("*").order("created_at", { ascending: false }), supabase.from("campaign_notification_deliveries").select("*").order("sent_at", { ascending: false })]); setEmployees((e ?? []) as Employee[]); setWorkLocations((l ?? []) as WorkLocation[]); setEmployeeLocations((el ?? []) as EmployeeLocation[]); setCampaignLocations((cl ?? []) as CampaignLocation[]); setProductLocations((pl ?? []) as ProductLocation[]); setCampaigns((c ?? []) as Campaign[]); setMembers((m ?? []) as CampaignMember[]); setProducts((p ?? []) as Product[]); setProductCategories((ca ?? []) as ProductCategory[]); setNominations((n ?? []) as Nomination[]); setVotes((v ?? []) as Vote[]); setComments((co ?? []) as Comment[]); setPurchases((pi ?? []) as PurchaseItem[]); setFeedbackSubmissions((fb ?? []) as FeedbackSubmission[]); setCampaignNotifications((cn ?? []) as CampaignNotificationDelivery[]); }, []);
     useEffect(() => { void load(); }, [load]);
     useEffect(() => { if (tab !== "purchase" || !purchaseCampaign)
         return; if (!purchaseCampaignId || !campaigns.some(c => c.id === purchaseCampaignId))
@@ -772,6 +788,44 @@ function AdminApp({ employee }: {
             return flash(snap.error.message);
         }
     } setBusy(false); setNewCampaign(false); setEditingCampaign(null); setSelectedCampaignId(savedId); flash(`活動設定已更新；可用預算為 NT$ ${totalBudget.toLocaleString()}${locationChanged ? "，參與名單已依新地點重整" : ""}`); await load(); }
+    async function sendCampaignNotification(row: Campaign) {
+        if (row.status !== "active")
+            return flash("請先將活動發布狀態設為「啟用」，再寄送活動通知");
+        const sentRows = campaignNotifications.filter(item => item.campaign_id === row.id && item.status === "sent");
+        const activeMembers = members.filter(item => item.campaign_id === row.id && item.active);
+        const unsentCount = Math.max(0, activeMembers.length - sentRows.length);
+        if (!await askConfirm({
+            title: sentRows.length ? `補寄「${row.label}」活動通知？` : `寄送「${row.label}」活動通知？`,
+            items: [
+                sentRows.length ? `已有 ${sentRows.length} 人寄送成功，本次不會重複寄給他們。` : `目前本期參與名單共 ${activeMembers.length} 人。`,
+                unsentCount > 0 ? `預計寄給尚未收到通知的同仁；系統也會自動納入後來新增且地點相符的人員。` : `系統會重新檢查是否有後來新增且地點相符的人員，只寄給未曾成功寄送者。`,
+                "活動內容或時程後續若有修正，系統不會另行寄送通知；信件中也會明確說明。",
+            ],
+            confirmLabel: sentRows.length ? "確認補寄" : "確認寄送",
+        })) return;
+        setNotifyingCampaignId(row.id);
+        const { data, error } = await supabase.functions.invoke("send-campaign-notification", { body: { campaignId: row.id, appUrl: appEntryUrl() } });
+        setNotifyingCampaignId(null);
+        if (error) {
+            const message = error.message.includes("non-2xx") ? "活動通知寄送服務尚未設定完成，請確認 Edge Function 與 Brevo API 金鑰" : error.message;
+            return flash(`寄送失敗：${message}`);
+        }
+        const result = data as { eligible?: number; alreadySent?: number; sent?: number; failed?: number; error?: string } | null;
+        if (result?.error) {
+            const labels: Record<string, string> = {
+                EMAIL_SERVICE_NOT_CONFIGURED: "尚未設定 Brevo API 金鑰或寄件 Email",
+                CAMPAIGN_NOT_ACTIVE: "活動尚未啟用",
+                CAMPAIGN_LOCATION_REQUIRED: "活動尚未設定適用地點",
+            };
+            return flash(`寄送失敗：${labels[result.error] ?? result.error}`);
+        }
+        await load();
+        if (result?.failed)
+            return flash(`已寄出 ${result.sent ?? 0} 封，另有 ${result.failed} 封失敗；再次按鈕會只重試未成功者`);
+        if (!result?.sent)
+            return flash("所有符合資格的同仁都已寄送過，本次沒有重複寄信");
+        flash(`活動通知已寄給 ${result.sent} 位同仁；已寄送者日後不會重複收到`);
+    }
     async function addProduct(e: FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setBusy(true);
@@ -969,7 +1023,7 @@ function AdminApp({ employee }: {
     const title = adminTabs.find(x => x.id === tab)?.label ?? "管理總覽";
     return <main className="admin-shell"><aside className="admin-nav"><div className="brand admin-brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>管理後台</small></div></div><nav>{adminTabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span>{item.label}{item.id === "pending" && pending.length > 0 && <b className="nav-badge">{pending.length}</b>}</button>)}<a href="#/"><button><span>←</span>回員工頁面</button></a></nav><div className="admin-user"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>系統管理者</small></div></div></aside><section className="admin-main"><header className="admin-top"><div><p className="section-kicker">ADMIN CONSOLE</p><h1>{title}</h1></div><div className="admin-status"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{getSessionMode() === "shared" ? "共用電腦模式" : "此瀏覽器已登入"}</span>{latest && <span className={`status-pill ${phaseOf(latest)}`}>{latest.label} · {phaseLabel(phaseOf(latest))}</span>}<button className="table-action" onClick={() => supabase.auth.signOut()}>登出</button></div></header>{message && <div className="admin-toast">{message}</div>}<div className="admin-content">
     {tab === "overview" && <><div className="stat-grid"><article><span>啟用員工</span><strong>{employees.filter(e => e.active).length}</strong><small>人</small></article><article><span>活動紀錄</span><strong>{campaigns.length}</strong><small>期</small></article><article><span>啟用商品</span><strong>{catalogProducts.filter(p => p.active && p.approval_status === "approved").length}</strong><small>項</small></article><article><span>待審商品</span><strong>{pending.length}</strong><small>項</small></article></div><div className="admin-two"><section className="admin-card"><div className="card-title"><div><p className="section-kicker">CURRENT CAMPAIGN</p><h2>{latest?.label ?? "尚未建立本期活動"}</h2></div>{latest && <button onClick={() => setTab("campaign")}>編輯設定 →</button>}</div>{latest ? <><Timeline campaign={latest} phase={phaseOf(latest)}/><div className="rule-note"><strong>本期規則</strong><span>預算 NT$ {Number(latest.budget).toLocaleString()} · 每人提名 {latest.nomination_limit} 項 · 共 {latest.vote_limit} 票</span></div></> : <div className="admin-empty"><button className="solid-button" onClick={() => setTab("campaign")}>建立第一期活動</button></div>}</section><section className="admin-card"><div className="card-title"><div><p className="section-kicker">QUICK ACTIONS</p><h2>接下來要處理</h2></div></div><div className="quick-list"><button onClick={() => setTab("pending")}><strong>{pending.length}</strong><span>筆待審商品</span><em>前往審核 →</em></button><button onClick={() => setTab("purchase")}><strong>{latest ? votes.filter(v => v.campaign_id === latest.id).length : 0}</strong><span>張本期票數</span><em>安排採購 →</em></button><button onClick={() => setTab("employees")}><strong>{employees.filter(e => e.active).length}</strong><span>位啟用員工</span><em>管理名單 →</em></button></div></section></div></>}
-    {tab === "campaign" && <><div className="section-actions"><div><p>{newCampaign ? "設定新一期活動；既有活動會保留在歷史紀錄。" : "目前顯示啟用中的本期活動；此處金額與採購清單使用同一筆資料。"}</p>{!newCampaign && <select className="campaign-switch" value={campaignForForm?.id ?? ""} onChange={e => { setSelectedCampaignId(e.target.value); setEditingCampaign(null); }}>{campaigns.map(c => <option key={c.id} value={c.id}>{locationNames(campaignLocations.filter(row => row.campaign_id === c.id).map(row => row.work_location_id), workLocations)}｜{c.label}</option>)}</select>}</div><button className="solid-button" onClick={() => { setNewCampaign(x => !x); setEditingCampaign(null); }}>{newCampaign ? "取消建立新活動" : "＋ 建立下一期"}</button></div><CampaignForm key={newCampaign ? "new" : campaignForForm ? `${campaignForForm.id}:${campaignForForm.description}:${campaignForForm.base_budget}:${campaignForForm.carryover_enabled}:${campaignForForm.retain_unused_budget}:${campaignForForm.carryover_amount}:${campaignForForm.budget}:${campaignForForm.start_at}:${campaignForForm.nomination_deadline}:${campaignForForm.voting_deadline}:${campaignForForm.purchase_at}:${campaignForForm.nomination_limit}:${campaignForForm.vote_limit}:${campaignForForm.status}` : "empty"} campaign={newCampaign ? null : campaignForForm} locations={workLocations} selectedLocationIds={newCampaign ? [] : campaignLocations.filter(row => row.campaign_id === campaignForForm?.id).map(row => row.work_location_id)} busy={busy} onSubmit={saveCampaign}/>{!newCampaign && campaignForForm && <CampaignMemberPanel campaign={campaignForForm} employees={employees} members={members} employeeLocations={employeeLocations} campaignLocations={campaignLocations} onToggle={toggleCampaignMember}/>}</>}
+    {tab === "campaign" && <><div className="section-actions"><div><p>{newCampaign ? "設定新一期活動；既有活動會保留在歷史紀錄。" : "目前顯示啟用中的本期活動；此處金額與採購清單使用同一筆資料。"}</p>{!newCampaign && <select className="campaign-switch" value={campaignForForm?.id ?? ""} onChange={e => { setSelectedCampaignId(e.target.value); setEditingCampaign(null); }}>{campaigns.map(c => <option key={c.id} value={c.id}>{locationNames(campaignLocations.filter(row => row.campaign_id === c.id).map(row => row.work_location_id), workLocations)}｜{c.label}</option>)}</select>}</div><button className="solid-button" onClick={() => { setNewCampaign(x => !x); setEditingCampaign(null); }}>{newCampaign ? "取消建立新活動" : "＋ 建立下一期"}</button></div><CampaignForm key={newCampaign ? "new" : campaignForForm ? `${campaignForForm.id}:${campaignForForm.description}:${campaignForForm.base_budget}:${campaignForForm.carryover_enabled}:${campaignForForm.retain_unused_budget}:${campaignForForm.carryover_amount}:${campaignForForm.budget}:${campaignForForm.start_at}:${campaignForForm.nomination_deadline}:${campaignForForm.voting_deadline}:${campaignForForm.purchase_at}:${campaignForForm.nomination_limit}:${campaignForForm.vote_limit}:${campaignForForm.status}` : "empty"} campaign={newCampaign ? null : campaignForForm} locations={workLocations} selectedLocationIds={newCampaign ? [] : campaignLocations.filter(row => row.campaign_id === campaignForForm?.id).map(row => row.work_location_id)} busy={busy} onSubmit={saveCampaign}/>{!newCampaign && campaignForForm && <CampaignNotificationPanel campaign={campaignForForm} deliveries={campaignNotifications} busy={notifyingCampaignId === campaignForForm.id} onSend={sendCampaignNotification}/>} {!newCampaign && campaignForForm && <CampaignMemberPanel campaign={campaignForForm} employees={employees} members={members} employeeLocations={employeeLocations} campaignLocations={campaignLocations} onToggle={toggleCampaignMember}/>}</>}
 {tab === "employees" && <section className="admin-card">
       <div className="card-title"><div><p className="section-kicker">EMPLOYEE ROSTER</p><h2>員工名單</h2></div><span className="count-tag">{employees.length} 人</span></div>
       <form className="add-employee multi-location-form" onSubmit={addEmployee}>
@@ -1102,6 +1156,29 @@ function CampaignForm({ campaign, locations, selectedLocationIds, busy, onSubmit
         </div>
         <div className="form-footer"><div className="rule-note"><strong>參與名單</strong><span>建立或變更地點時會依地點交集更新參與名單，之後仍可逐一調整。</span></div><button className="solid-button" disabled={busy}>{busy ? "儲存中…" : "儲存活動設定"}</button></div>
       </form>
+    </section>;
+}
+function CampaignNotificationPanel({ campaign, deliveries, busy, onSend }: {
+    campaign: Campaign;
+    deliveries: CampaignNotificationDelivery[];
+    busy: boolean;
+    onSend: (campaign: Campaign) => void;
+}) {
+    const rows = deliveries.filter(row => row.campaign_id === campaign.id);
+    const sent = rows.filter(row => row.status === "sent").sort((a, b) => +(new Date(b.sent_at ?? 0)) - +(new Date(a.sent_at ?? 0)));
+    const failed = rows.filter(row => row.status === "failed");
+    const lastSent = sent[0];
+    const formatSentAt = (value: string | null) => value ? new Intl.DateTimeFormat("zh-TW", { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)) : "";
+    return <section className="admin-card campaign-notification-card">
+      <div className="campaign-notification-main">
+        <div className="notification-icon">✉</div>
+        <div><p className="section-kicker">ACTIVITY EMAIL</p><h2>活動開始通知</h2><p>每位本期參與同仁只會收到一次。日後新增且地點相符的同仁，可再次按下按鈕補寄；已成功寄送者不會重複收到。</p></div>
+        <div className="notification-summary"><strong>{sent.length}</strong><span>人已寄送</span>{failed.length > 0 && <small>{failed.length} 人寄送失敗，可再次重試</small>}</div>
+        <button className="notification-send" disabled={busy || campaign.status !== "active"} onClick={() => onSend(campaign)}>{busy ? "寄送中…" : sent.length ? "補寄給新增同仁" : "寄送活動通知"}</button>
+      </div>
+      {campaign.status !== "active" && <div className="notification-warning">活動目前不是「啟用」狀態，儲存為啟用後才能寄送通知。</div>}
+      <div className="notification-once-note"><strong>信件固定提醒</strong><span>活動內容或時程若有修正將不另行通知，請同仁以網站最新資訊為準。</span></div>
+      {lastSent && <details className="notification-log"><summary>查看寄送紀錄 · 最近由 {lastSent.sent_by_name} 於 {formatSentAt(lastSent.sent_at)} 寄送</summary><div className="notification-recipient-list">{sent.map(row => <article key={row.id}><span><strong>{row.recipient_name}</strong><small>{row.recipient_email}</small></span><span>{formatSentAt(row.sent_at)}</span><em>寄送者：{row.sent_by_name}</em></article>)}</div></details>}
     </section>;
 }
 function CampaignMemberPanel({ campaign, employees, members, employeeLocations, campaignLocations, onToggle }: {
