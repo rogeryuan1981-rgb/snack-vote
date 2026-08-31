@@ -1,7 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSessionMode, isSupabaseConfigured, setSessionMode, supabase } from "./lib/supabase";
-import { starterProducts } from "./starterProducts";
 type WorkLocation = {
     id: string;
     name: string;
@@ -847,15 +846,6 @@ function AdminApp({ employee }: {
             await load();
         } catch (error) { flash(errorText(error)); } finally { setBusy(false); }
     }
-    async function addStarterProducts() { const existing = new Set(products.filter(p => p.active).map(p => `${p.brand.trim().toLowerCase()}|${p.name.trim().toLowerCase()}|${p.size.trim().toLowerCase()}`)); const rows = starterProducts.filter(([brand, name, , size]) => !existing.has(`${brand.toLowerCase()}|${name.toLowerCase()}|${size.toLowerCase()}`)).map(([brand, name, category, size]) => ({ brand, name, category, size, reference_price: null, source_url: null, origin: "catalog", approval_status: "approved", active: true })); if (!rows.length)
-        return flash("基礎商品都已經在資料庫中"); if (!await askConfirm({ title: "加入基礎商品", items: [`將加入 ${rows.length} 項基礎商品。`, `價格會先標示為待確認，可再逐項補充。`], confirmLabel: "確認加入" }))
-        return; setBusy(true); const existingCategories = new Set(productCategories.map(c => c.name)); const missingCategories = [...new Set(rows.map(r => r.category))].filter(category => !existingCategories.has(category)); if (missingCategories.length) {
-        const categoryResult = await supabase.from("product_categories").insert(missingCategories.map((category, index) => ({ name: category, sort_order: (productCategories.at(-1)?.sort_order ?? 0) + (index + 1) * 10 })));
-        if (categoryResult.error) {
-            setBusy(false);
-            return flash(categoryResult.error.message);
-        }
-    } const created = await supabase.from("products").insert(rows).select("id"); if (created.error) { setBusy(false); return flash(created.error.message); } const activeLocationIds = workLocations.filter(row => row.active).map(row => row.id); if (activeLocationIds.length && created.data?.length) { const links = created.data.flatMap(product => activeLocationIds.map(work_location_id => ({ product_id: product.id, work_location_id }))); const linked = await supabase.from("product_work_locations").insert(links); if (linked.error) { setBusy(false); return flash(linked.error.message); } } setBusy(false); flash(`已加入 ${rows.length} 項基礎商品，適用於所有啟用地點`); await load(); }
     async function addCategory(categoryName: string) { const clean = categoryName.trim(); if (!clean)
         return; setBusy(true); const nextOrder = (productCategories.at(-1)?.sort_order ?? 0) + 10; const { error } = await supabase.from("product_categories").insert({ name: clean, sort_order: nextOrder }); setBusy(false); if (error)
         return flash(error.code === "23505" ? "已有同名類別" : error.message); flash(`已新增「${clean}」類別`); await load(); }
@@ -1040,7 +1030,7 @@ function AdminApp({ employee }: {
     {tab === "locations" && <WorkLocationManager locations={workLocations} employeeLocations={employeeLocations} campaignLocations={campaignLocations} productLocations={productLocations} onAdd={addLocation} onRename={renameLocation} onDelete={deleteLocation} onToggle={toggleLocation}/>} 
 {tab === "products" && <>
       <CategoryManager categories={productCategories} products={catalogProducts} nominations={nominations} votes={votes} currentCampaigns={campaigns.filter(c => c.status === "active")} busy={busy} onAdd={addCategory} onRename={renameCategory} onDelete={deleteCategory}/>
-      <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div><button className="seed-button" disabled={busy} onClick={addStarterProducts}>一鍵加入 {starterProducts.length} 項基礎商品</button></div>
+      <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div></div>
         <form className="product-form product-form-with-image multi-location-form" onSubmit={addProduct}>
           <input name="brand" placeholder="品牌（可空白）"/><input required name="name" placeholder="商品名稱"/>
           <select required name="category" defaultValue=""><option value="" disabled>選擇分類</option>{productCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
