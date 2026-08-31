@@ -188,7 +188,7 @@ function errorText(error: unknown) {
 }
 function appEntryUrl() { return new URL("./", document.baseURI).href.split("#")[0]; }
 function productImageUrl(path: string | null) { return path ? supabase.storage.from("product-images").getPublicUrl(path).data.publicUrl : ""; }
-function productImageStyle(product: Pick<Product, "image_position_x" | "image_position_y" | "image_fit">) { return { objectPosition: `${Number(product.image_position_x ?? 50)}% ${Number(product.image_position_y ?? 50)}%`, objectFit: product.image_fit === "contain" ? "contain" as const : "cover" as const }; }
+function productImageStyle(product: Pick<Product, "image_position_x" | "image_position_y" | "image_fit">) { return { objectPosition: `${Number(product.image_position_x ?? 50)}% ${Number(product.image_position_y ?? 50)}%`, objectFit: product.image_fit === "cover" ? "cover" as const : "contain" as const }; }
 function ImageFramingControls({ preview, x, y, fit, onChange }: { preview: string; x: number; y: number; fit: "cover" | "contain"; onChange: (next: { x?: number; y?: number; fit?: "cover" | "contain" }) => void; }) {
     if (!preview) return null;
     return <div className="image-framing-panel"><div className="image-framing-preview"><img src={preview} alt="商品圖片顯示預覽" style={{ objectPosition: `${x}% ${y}%`, objectFit: fit }}/><span>商品卡片預覽</span></div><div className="image-framing-controls"><div className="fit-choice"><button type="button" className={fit === "cover" ? "active" : ""} onClick={() => onChange({ fit: "cover" })}>填滿視窗</button><button type="button" className={fit === "contain" ? "active" : ""} onClick={() => onChange({ fit: "contain" })}>完整顯示</button></div><label><span>左右焦點</span><input type="range" min="0" max="100" value={x} onChange={event => onChange({ x: Number(event.target.value) })}/><output>{x}%</output></label><label><span>上下焦點</span><input type="range" min="0" max="100" value={y} onChange={event => onChange({ y: Number(event.target.value) })}/><output>{y}%</output></label><small>「填滿視窗」可能裁切邊緣，可用焦點調整位置；「完整顯示」會保留整張圖片。</small></div></div>;
@@ -198,8 +198,8 @@ function ProductImageUploadField({ compact = false }: { compact?: boolean }) {
     const [preview, setPreview] = useState("");
     const [x, setX] = useState(50);
     const [y, setY] = useState(50);
-    const [fit, setFit] = useState<"cover" | "contain">("cover");
-    useEffect(() => { const form = root.current?.closest("form"); const reset = () => { setPreview(current => { if (current.startsWith("blob:")) URL.revokeObjectURL(current); return ""; }); setX(50); setY(50); setFit("cover"); }; form?.addEventListener("reset", reset); return () => form?.removeEventListener("reset", reset); }, []);
+    const [fit, setFit] = useState<"cover" | "contain">("contain");
+    useEffect(() => { const form = root.current?.closest("form"); const reset = () => { setPreview(current => { if (current.startsWith("blob:")) URL.revokeObjectURL(current); return ""; }); setX(50); setY(50); setFit("contain"); }; form?.addEventListener("reset", reset); return () => form?.removeEventListener("reset", reset); }, []);
     useEffect(() => () => { if (preview.startsWith("blob:")) URL.revokeObjectURL(preview); }, [preview]);
     function choose(file: File | null) { if (!file) return; setPreview(current => { if (current.startsWith("blob:")) URL.revokeObjectURL(current); return URL.createObjectURL(file); }); }
     return <div ref={root} className={`image-upload-framing ${compact ? "compact" : ""}`}><label className={compact ? "compact-file" : "image-input"}>{preview ? "更換商品圖" : "選擇商品圖"}<input name="image" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={event => choose(event.target.files?.[0] ?? null)}/></label><input type="hidden" name="image_position_x" value={x}/><input type="hidden" name="image_position_y" value={y}/><input type="hidden" name="image_fit" value={fit}/><ImageFramingControls preview={preview} x={x} y={y} fit={fit} onChange={next => { if (next.x != null) setX(next.x); if (next.y != null) setY(next.y); if (next.fit) setFit(next.fit); }}/></div>;
@@ -558,7 +558,7 @@ function EmployeeApp({ employee, route }: {
             const attached = await supabase.rpc("set_product_image", { p_product_id: data, p_image_path: path });
             if (attached.error)
                 throw attached.error;
-            const framed = await supabase.rpc("set_product_image_framing", { p_product_id: data, p_position_x: Number(form.get("image_position_x") || 50), p_position_y: Number(form.get("image_position_y") || 50), p_fit: String(form.get("image_fit") || "cover") });
+            const framed = await supabase.rpc("set_product_image_framing", { p_product_id: data, p_position_x: Number(form.get("image_position_x") || 50), p_position_y: Number(form.get("image_position_y") || 50), p_fit: String(form.get("image_fit") || "contain") });
             if (framed.error)
                 throw framed.error;
         }
@@ -856,7 +856,7 @@ function AdminApp({ employee }: {
         try {
             const image = form.get("image");
             const imagePath = image instanceof File && image.size > 0 ? await uploadProductImage(image, employee.id) : null;
-            const payload = { brand: String(form.get("brand")).trim(), name: String(form.get("name")).trim(), category: String(form.get("category")).trim(), size: String(form.get("size")).trim(), reference_price: form.get("reference_price") ? Number(form.get("reference_price")) : null, image_path: imagePath, image_position_x: Number(form.get("image_position_x") || 50), image_position_y: Number(form.get("image_position_y") || 50), image_fit: String(form.get("image_fit") || "cover"), origin: "catalog", approval_status: "approved", active: true };
+            const payload = { brand: String(form.get("brand")).trim(), name: String(form.get("name")).trim(), category: String(form.get("category")).trim(), size: String(form.get("size")).trim(), reference_price: form.get("reference_price") ? Number(form.get("reference_price")) : null, image_path: imagePath, image_position_x: Number(form.get("image_position_x") || 50), image_position_y: Number(form.get("image_position_y") || 50), image_fit: String(form.get("image_fit") || "contain"), origin: "catalog", approval_status: "approved", active: true };
             const created = await supabase.from("products").insert(payload).select("id").single();
             if (created.error) throw created.error;
             const assigned = await supabase.rpc("set_product_locations", { p_product_id: created.data.id, p_location_ids: locationIds });
@@ -978,7 +978,7 @@ function AdminApp({ employee }: {
         if (image) {
             imagePath = await uploadProductImage(image, employee.id);
         }
-        const payload = { brand: String(form.get("brand") || "").trim(), name: String(form.get("name") || "").trim(), category: String(form.get("category") || "").trim(), size: String(form.get("size") || "").trim(), reference_price: form.get("reference_price") ? Number(form.get("reference_price")) : null, image_path: imagePath, image_position_x: Number(form.get("image_position_x") || 50), image_position_y: Number(form.get("image_position_y") || 50), image_fit: String(form.get("image_fit") || "cover"), active: String(form.get("active")) === "true" };
+        const payload = { brand: String(form.get("brand") || "").trim(), name: String(form.get("name") || "").trim(), category: String(form.get("category") || "").trim(), size: String(form.get("size") || "").trim(), reference_price: form.get("reference_price") ? Number(form.get("reference_price")) : null, image_path: imagePath, image_position_x: Number(form.get("image_position_x") || 50), image_position_y: Number(form.get("image_position_y") || 50), image_fit: String(form.get("image_fit") || "contain"), active: String(form.get("active")) === "true" };
         const { error } = await supabase.from("products").update(payload).eq("id", editingProduct.id);
         if (error)
             throw error;
@@ -1267,7 +1267,7 @@ function ProductEditor({ product, categories, locations, selectedLocationIds, bu
     const [removeImage, setRemoveImage] = useState(false);
     const [imageX, setImageX] = useState(Number(product.image_position_x ?? 50));
     const [imageY, setImageY] = useState(Number(product.image_position_y ?? 50));
-    const [imageFit, setImageFit] = useState<"cover" | "contain">(product.image_fit === "contain" ? "contain" : "cover");
+    const [imageFit, setImageFit] = useState<"cover" | "contain">(product.image_fit === "cover" ? "cover" : "contain");
     const [locationIds, setLocationIds] = useState(selectedLocationIds);
     async function requestClose() { if (!dirty || await askConfirm({ title: "放棄尚未儲存的修改？", items: ["關閉後，本次編輯的文字、圖片與地點變更都不會保留。"], confirmLabel: "放棄修改", danger: true })) onClose(); }
     useEffect(() => { const handle = (event: KeyboardEvent) => { if (event.key === "Escape") void requestClose(); }; window.addEventListener("keydown", handle); return () => window.removeEventListener("keydown", handle); }, [dirty]);
