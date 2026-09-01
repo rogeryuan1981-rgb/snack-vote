@@ -465,7 +465,7 @@ function EmployeeApp({ employee, route }: {
     const [sortMode, setSortMode] = useState<ProductSort>("smart");
     const [draftNominations, setDraftNominations] = useState<string[]>([]);
     const [toast, setToast] = useState("");
-    const [customOpen, setCustomOpen] = useState(() => Object.keys(readFormDraft("snack-vote-custom-product-draft")).length > 0);
+    const [customOpen, setCustomOpen] = useState(false);
     const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
     const load = useCallback(async (silent = false) => {
         if (!silent)
