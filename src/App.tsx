@@ -73,6 +73,7 @@ type ProductCategory = {
     id: string;
     name: string;
     sort_order: number;
+    work_location_id?: string | null;
 };
 type CampaignMember = {
     id: string;
@@ -450,6 +451,7 @@ function EmployeeApp({ employee, route }: {
     const [products, setProducts] = useState<Product[]>([]);
     const [historyProducts, setHistoryProducts] = useState<Product[]>([]);
     const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
+    const [currentCategoryLocationIds, setCurrentCategoryLocationIds] = useState<Set<string>>(() => new Set());
     const [nominations, setNominations] = useState<Nomination[]>([]);
     const [votes, setVotes] = useState<Vote[]>([]);
     const [comments, setComments] = useState<Comment[]>([]);
@@ -490,7 +492,7 @@ function EmployeeApp({ employee, route }: {
         const campaignIds = [...(current ? [current.id] : []), ...history.map(x => x.id)];
         const ids = campaignIds.length ? campaignIds : ["00000000-0000-0000-0000-000000000000"];
         const [{ data: p }, { data: ca }, { data: n }, { data: v }, { data: co }, { data: rr }, { data: pi }, { data: pr }] = await Promise.all([
-            supabase.from("products").select("*").order("category").order("name").order("id"), supabase.from("product_categories").select("id,name,sort_order").order("sort_order").order("name"),
+            supabase.from("products").select("*").order("category").order("name").order("id"), supabase.from("product_categories").select("id,name,sort_order,work_location_id").order("sort_order").order("name"),
             supabase.from("nominations").select("*").in("campaign_id", ids), supabase.from("votes").select("*").in("campaign_id", ids),
             supabase.from("comments").select("*").in("campaign_id", ids).is("deleted_at", null).order("created_at"), supabase.from("product_reactions").select("*").order("created_at"), supabase.from("purchase_items").select("*").in("campaign_id", ids).order("rank"),
             supabase.from("purchase_reviews").select("*").in("campaign_id", ids).order("created_at")
@@ -498,6 +500,7 @@ function EmployeeApp({ employee, route }: {
         const [{ data: pl }, { data: cl }] = await Promise.all([supabase.from("product_work_locations").select("product_id,work_location_id"), supabase.from("campaign_work_locations").select("campaign_id,work_location_id").in("campaign_id", ids)]);
         const productLocationRows = (pl ?? []) as ProductLocation[];
         const currentLocationIds = new Set(((cl ?? []) as CampaignLocation[]).filter(row => row.campaign_id === current?.id).map(row => row.work_location_id));
+        setCurrentCategoryLocationIds(currentLocationIds);
         const visibleProductIds = new Set(productLocationRows.filter(row => currentLocationIds.has(row.work_location_id)).map(row => row.product_id));
         const allProducts = (p ?? []) as Product[];
         const allNominations = (n ?? []) as Nomination[];
@@ -553,7 +556,8 @@ function EmployeeApp({ employee, route }: {
         return <ShellHeader employee={employee}><section className="empty-campaign"><h2>目前沒有進行中的活動</h2><p>新活動建立後會顯示在這裡；你仍可前往查看近期投票、採購與心得紀錄。</p><a className="empty-campaign-link" href="#/history">查看近三期活動</a></section>{toast && <div className="toast">{toast}</div>}{confirmElement}</ShellHeader>;
     const phase = phaseOf(campaign);
     const myVotes = votes.filter(v => v.employee_id === employee.id);
-    const categories = ["全部", ...(productCategories.length ? productCategories.map(c => c.name) : [...new Set(products.map(p => p.category))])];
+    const locationCategories = productCategories.filter(row => !row.work_location_id || currentCategoryLocationIds.has(row.work_location_id));
+    const categories = ["全部", ...(productCategories.length ? locationCategories.map(c => c.name) : [...new Set(products.map(p => p.category))])];
     const nominatedProducts = new Set(nominations.map(n => n.product_id));
     const voteCount = (productId: string) => votes.filter(v => v.product_id === productId).length;
     const rankedProducts = products.filter(p => nominatedProducts.has(p.id)).sort((a, b) => voteCount(b.id) - voteCount(a.id) || a.name.localeCompare(b.name, "zh-Hant"));
@@ -792,7 +796,7 @@ function AdminApp({ employee }: {
     const purchaseCampaigns = campaigns.filter(c => { if (c.status === "draft")
         return false; const rows = purchases.filter(row => row.campaign_id === c.id && Number(row.final_quantity ?? row.suggested_quantity) > 0); return c.status === "active" || (rows.length > 0 && !rows.every(row => row.purchased)) || c.id === purchaseCampaignId; }).sort((a, b) => { const aRows = purchases.filter(row => row.campaign_id === a.id && Number(row.final_quantity ?? row.suggested_quantity) > 0); const bRows = purchases.filter(row => row.campaign_id === b.id && Number(row.final_quantity ?? row.suggested_quantity) > 0); const aPending = aRows.length > 0 && !aRows.every(row => row.purchased); const bPending = bRows.length > 0 && !bRows.every(row => row.purchased); return Number(bPending) - Number(aPending) || +new Date(a.purchase_at) - +new Date(b.purchase_at); });
     const purchaseCampaign = campaigns.find(c => c.id === purchaseCampaignId) ?? purchaseCampaigns[0] ?? campaigns.find(c => c.status !== "draft") ?? null;
-    const load = useCallback(async () => { const [{ data: e }, { data: l }, { data: el }, { data: cl }, { data: pl }, { data: c }, { data: m }, { data: p }, { data: ca }, { data: n }, { data: v }, { data: co }, { data: pi }, { data: fb }, { data: cn }] = await Promise.all([supabase.from("employees").select("id,user_id,name,email,role,active,work_location_id").order("name"), supabase.from("work_locations").select("id,name,active").order("name"), supabase.from("employee_work_locations").select("employee_id,work_location_id"), supabase.from("campaign_work_locations").select("campaign_id,work_location_id"), supabase.from("product_work_locations").select("product_id,work_location_id"), supabase.from("campaigns").select("*").order("start_at", { ascending: false }), supabase.from("campaign_members").select("*").order("name_snapshot"), supabase.from("products").select("*").order("category").order("name").order("id"), supabase.from("product_categories").select("id,name,sort_order").order("sort_order").order("name"), supabase.from("nominations").select("*").order("created_at"), supabase.from("votes").select("*").order("created_at"), supabase.from("comments").select("*").is("deleted_at", null).order("created_at"), supabase.from("purchase_items").select("*").order("rank"), supabase.from("feedback_submissions").select("*").order("created_at", { ascending: false }), supabase.from("campaign_notification_deliveries").select("*").order("sent_at", { ascending: false })]); setEmployees((e ?? []) as Employee[]); setWorkLocations((l ?? []) as WorkLocation[]); setEmployeeLocations((el ?? []) as EmployeeLocation[]); setCampaignLocations((cl ?? []) as CampaignLocation[]); setProductLocations((pl ?? []) as ProductLocation[]); setCampaigns((c ?? []) as Campaign[]); setMembers((m ?? []) as CampaignMember[]); setProducts((p ?? []) as Product[]); setProductCategories((ca ?? []) as ProductCategory[]); setNominations((n ?? []) as Nomination[]); setVotes((v ?? []) as Vote[]); setComments((co ?? []) as Comment[]); setPurchases((pi ?? []) as PurchaseItem[]); setFeedbackSubmissions((fb ?? []) as FeedbackSubmission[]); setCampaignNotifications((cn ?? []) as CampaignNotificationDelivery[]); }, []);
+    const load = useCallback(async () => { const [{ data: e }, { data: l }, { data: el }, { data: cl }, { data: pl }, { data: c }, { data: m }, { data: p }, { data: ca }, { data: n }, { data: v }, { data: co }, { data: pi }, { data: fb }, { data: cn }] = await Promise.all([supabase.from("employees").select("id,user_id,name,email,role,active,work_location_id").order("name"), supabase.from("work_locations").select("id,name,active").order("name"), supabase.from("employee_work_locations").select("employee_id,work_location_id"), supabase.from("campaign_work_locations").select("campaign_id,work_location_id"), supabase.from("product_work_locations").select("product_id,work_location_id"), supabase.from("campaigns").select("*").order("start_at", { ascending: false }), supabase.from("campaign_members").select("*").order("name_snapshot"), supabase.from("products").select("*").order("category").order("name").order("id"), supabase.from("product_categories").select("id,name,sort_order,work_location_id").order("sort_order").order("name"), supabase.from("nominations").select("*").order("created_at"), supabase.from("votes").select("*").order("created_at"), supabase.from("comments").select("*").is("deleted_at", null).order("created_at"), supabase.from("purchase_items").select("*").order("rank"), supabase.from("feedback_submissions").select("*").order("created_at", { ascending: false }), supabase.from("campaign_notification_deliveries").select("*").order("sent_at", { ascending: false })]); setEmployees((e ?? []) as Employee[]); setWorkLocations((l ?? []) as WorkLocation[]); setEmployeeLocations((el ?? []) as EmployeeLocation[]); setCampaignLocations((cl ?? []) as CampaignLocation[]); setProductLocations((pl ?? []) as ProductLocation[]); setCampaigns((c ?? []) as Campaign[]); setMembers((m ?? []) as CampaignMember[]); setProducts((p ?? []) as Product[]); setProductCategories((ca ?? []) as ProductCategory[]); setNominations((n ?? []) as Nomination[]); setVotes((v ?? []) as Vote[]); setComments((co ?? []) as Comment[]); setPurchases((pi ?? []) as PurchaseItem[]); setFeedbackSubmissions((fb ?? []) as FeedbackSubmission[]); setCampaignNotifications((cn ?? []) as CampaignNotificationDelivery[]); }, []);
     useEffect(() => { void load(); }, [load]);
     useEffect(() => { if (tab !== "purchase" || !purchaseCampaign)
         return; if (!purchaseCampaignId || !campaigns.some(c => c.id === purchaseCampaignId))
@@ -837,7 +841,7 @@ function AdminApp({ employee }: {
         return flash(error.code === "23505" ? "已有同名地點" : error.message); flash("上班地點已更新"); await load(); }
     async function deleteLocation(row: WorkLocation) { if (!await askConfirm({ title: `刪除「${row.name}」？`, items: ["只有未分配員工、且沒有活動紀錄的地點可以刪除。"], confirmLabel: "確認刪除", danger: true }))
         return; const { error } = await supabase.rpc("delete_work_location", { p_location_id: row.id }); if (error)
-        return flash(error.message.includes("LOCATION_HAS_EMPLOYEES") ? "仍有員工屬於此地點，請先調整員工地點" : error.message.includes("LOCATION_HAS_CAMPAIGNS") ? "此地點已有活動紀錄，因此不可刪除；可改為停用" : error.message.includes("LOCATION_HAS_PRODUCTS") ? "仍有商品適用於此地點，請先調整商品地點" : error.message); flash("上班地點已刪除"); await load(); }
+        return flash(error.message.includes("LOCATION_HAS_EMPLOYEES") ? "仍有員工屬於此地點，請先調整員工地點" : error.message.includes("LOCATION_HAS_CAMPAIGNS") ? "此地點已有活動紀錄，因此不可刪除；可改為停用" : error.message.includes("LOCATION_HAS_PRODUCTS") ? "仍有商品適用於此地點，請先調整商品地點" : error.message.includes("LOCATION_HAS_CATEGORIES") ? "仍有商品類別屬於此地點，請先調整類別地點" : error.message); flash("上班地點已刪除"); await load(); }
     async function toggleLocation(row: WorkLocation) { const { error } = await supabase.from("work_locations").update({ active: !row.active }).eq("id", row.id); if (error)
         return flash(error.message); flash(row.active ? "上班地點已停用；既有活動與員工資料仍保留" : "上班地點已重新啟用"); await load(); }
     async function saveCampaign(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const form = new FormData(e.currentTarget); const id = String(form.get("id") || ""); const wasNew = !id; const previous = campaigns.find(c => c.id === id); const previousLocationIds = campaignLocations.filter(row => row.campaign_id === id).map(row => row.work_location_id); const locationIds = form.getAll("location_ids").map(String); const baseBudget = Number(form.get("budget")); const workLocationId = locationIds[0] || ""; const locationChanged = Boolean(previous && (previousLocationIds.length !== locationIds.length || previousLocationIds.some(locationId => !locationIds.includes(locationId)))); const carryoverEnabled = form.get("carryover_enabled") === "true"; const retainUnusedBudget = form.get("retain_unused_budget") === "true"; const nominationLimit = Number(form.get("nomination_limit")); const voteLimit = Number(form.get("vote_limit")); const startDate = new Date(String(form.get("start_at"))); const nominationDate = new Date(String(form.get("nomination_deadline"))); const votingDate = new Date(String(form.get("voting_deadline"))); const purchaseDate = new Date(String(form.get("purchase_at"))); if (!locationIds.length)
@@ -931,12 +935,15 @@ function AdminApp({ employee }: {
             await load();
         } catch (error) { flash(errorText(error)); } finally { setBusy(false); }
     }
-    async function addCategory(categoryName: string) { const clean = categoryName.trim(); if (!clean)
-        return; setBusy(true); const nextOrder = (productCategories.at(-1)?.sort_order ?? 0) + 10; const { error } = await supabase.from("product_categories").insert({ name: clean, sort_order: nextOrder }); setBusy(false); if (error)
+    async function addCategory(categoryName: string, workLocationId: string) { const clean = categoryName.trim(); if (!clean || !workLocationId)
+        return; setBusy(true); const nextOrder = (productCategories.at(-1)?.sort_order ?? 0) + 10; const { error } = await supabase.from("product_categories").insert({ name: clean, sort_order: nextOrder, work_location_id: workLocationId }); setBusy(false); if (error)
         return flash(error.code === "23505" ? "已有同名類別" : error.message); flash(`已新增「${clean}」類別`); await load(); }
     async function renameCategory(row: ProductCategory, newName: string) { const clean = newName.trim(); if (!clean || clean === row.name)
         return; setBusy(true); const { error } = await supabase.rpc("rename_product_category", { p_category_id: row.id, p_new_name: clean }); setBusy(false); if (error)
         return flash(error.message.includes("CATEGORY_ALREADY_EXISTS") ? "已有同名類別" : error.message); flash(`類別已改名為「${clean}」，相關商品已同步更新`); await load(); }
+    async function updateCategoryLocation(row: ProductCategory, workLocationId: string) { if (!workLocationId)
+        return; setBusy(true); const { error } = await supabase.from("product_categories").update({ work_location_id: workLocationId }).eq("id", row.id); setBusy(false); if (error)
+        return flash(error.message); flash(`「${row.name}」的適用地點已更新`); await load(); }
     async function deleteCategory(row: ProductCategory) { const related = catalogProducts.filter(p => p.category === row.name); const relatedIds = new Set(related.map(p => p.id)); const activeCampaignIds = new Set(campaigns.filter(c => c.status === "active").map(c => c.id)); const used = [...nominations, ...votes].some(x => activeCampaignIds.has(x.campaign_id) && relatedIds.has(x.product_id)); if (used)
         return flash("此類別的商品已在進行中的活動被提名或投票，因此不可刪除"); const warning = related.length ? `刪除「${row.name}」會一併刪除其中 ${related.length} 項商品。過往活動紀錄仍會保留。確定刪除嗎？` : `確定刪除空白類別「${row.name}」嗎？`; if (!await askConfirm({ title: `刪除「${row.name}」類別`, items: [warning.replace("確定刪除嗎？", "").replace(`確定刪除空白類別「${row.name}」嗎？`, `這個類別目前沒有商品。`)], confirmLabel: "確認刪除", danger: true }))
         return; setBusy(true); const { data, error } = await supabase.rpc("delete_product_category", { p_category_id: row.id }); setBusy(false); if (error)
@@ -1121,7 +1128,7 @@ function AdminApp({ employee }: {
     </section>}
     {tab === "locations" && <WorkLocationManager locations={workLocations} employeeLocations={employeeLocations} campaignLocations={campaignLocations} productLocations={productLocations} onAdd={addLocation} onRename={renameLocation} onDelete={deleteLocation} onToggle={toggleLocation}/>} 
 {tab === "products" && <>
-      <CategoryManager categories={productCategories} products={catalogProducts} nominations={nominations} votes={votes} currentCampaigns={campaigns.filter(c => c.status === "active")} busy={busy} onAdd={addCategory} onRename={renameCategory} onDelete={deleteCategory}/>
+      <CategoryManager categories={productCategories} locations={workLocations} products={catalogProducts} nominations={nominations} votes={votes} currentCampaigns={campaigns.filter(c => c.status === "active")} busy={busy} onAdd={addCategory} onRename={renameCategory} onLocationChange={updateCategoryLocation} onDelete={deleteCategory}/>
       <section className="admin-card"><div className="card-title"><div><p className="section-kicker">ADD PRODUCT</p><h2>新增商品</h2></div></div>
         <form className="product-form product-form-with-image multi-location-form" onSubmit={addProduct}>
           <input name="brand" placeholder="品牌（可空白）"/><input required name="name" placeholder="商品名稱"/>
@@ -1300,23 +1307,29 @@ function WorkLocationManager({ locations, employeeLocations, campaignLocations, 
       <div className="location-list">{locations.map(row => { const employeeCount = employeeLocations.filter(item => item.work_location_id === row.id).length; const campaignCount = campaignLocations.filter(item => item.work_location_id === row.id).length; const productCount = productLocations.filter(item => item.work_location_id === row.id).length; return <article key={row.id}><span className="location-pin">⌖</span><input value={drafts[row.id] ?? row.name} onChange={event => setDrafts(current => ({ ...current, [row.id]: event.target.value }))}/><span>{employeeCount} 位員工 · {campaignCount} 期活動 · {productCount} 項商品</span><div><button disabled={(drafts[row.id] ?? row.name).trim() === row.name} onClick={() => onRename(row, drafts[row.id] ?? row.name)}>儲存名稱</button><button onClick={() => onToggle(row)}>{row.active ? "停用" : "啟用"}</button><button className="danger" onClick={() => onDelete(row)}>刪除</button></div></article>; })}</div>
     </section>;
 }
-function CategoryManager({ categories, products, nominations, votes, currentCampaigns, busy, onAdd, onRename, onDelete }: {
+function CategoryManager({ categories, locations, products, nominations, votes, currentCampaigns, busy, onAdd, onRename, onLocationChange, onDelete }: {
     categories: ProductCategory[];
+    locations: WorkLocation[];
     products: Product[];
     nominations: Nomination[];
     votes: Vote[];
     currentCampaigns: Campaign[];
     busy: boolean;
-    onAdd: (name: string) => void;
+    onAdd: (name: string, workLocationId: string) => void;
     onRename: (row: ProductCategory, name: string) => void;
+    onLocationChange: (row: ProductCategory, workLocationId: string) => void;
     onDelete: (row: ProductCategory) => void;
 }) {
     const [newName, setNewName] = useState("");
+    const projectOfficeId = locations.find(row => row.name === "專案辦公室")?.id ?? locations[0]?.id ?? "";
+    const [newLocationId, setNewLocationId] = useState("");
     const [drafts, setDrafts] = useState<Record<string, string>>({});
-    useEffect(() => { setDrafts(Object.fromEntries(categories.map(c => [c.id, c.name]))); }, [categories]);
-    function submit(event: FormEvent) { event.preventDefault(); const clean = newName.trim(); if (!clean)
-        return; onAdd(clean); setNewName(""); }
-    return <section className="admin-card category-manager"><div className="card-title"><div><p className="section-kicker">PRODUCT CATEGORIES</p><h2>商品類別</h2></div><span className="count-tag">{categories.length} 類</span></div><p className="panel-help">新增或改名後，員工端與所有商品表單會立即同步。刪除類別會一併移除其中商品，但不破壞過往活動紀錄。</p><form className="category-add" onSubmit={submit}><input value={newName} onChange={e => setNewName(e.target.value)} maxLength={80} placeholder="輸入新類別名稱"/><button disabled={busy || !newName.trim()}>＋ 新增類別</button></form><div className="category-admin-list">{categories.map(row => { const related = products.filter(p => p.category === row.name); const ids = new Set(related.map(p => p.id)); const activeIds = new Set(currentCampaigns.map(c => c.id)); const used = [...nominations, ...votes].some(x => activeIds.has(x.campaign_id) && ids.has(x.product_id)); const draft = drafts[row.id] ?? row.name; return <article key={row.id} className={used ? "protected" : ""}><span className="category-symbol">{icons[row.name] ?? "✦"}</span><label><small>類別名稱</small><input value={draft} maxLength={80} onChange={e => setDrafts(x => ({ ...x, [row.id]: e.target.value }))}/></label><span className="category-count"><strong>{related.length}</strong> 項商品</span>{used && <span className="category-lock">活動使用中</span>}<div><button disabled={busy || !draft.trim() || draft.trim() === row.name} onClick={() => onRename(row, draft)}>儲存名稱</button><button className="danger" disabled={busy || used} title={used ? "進行中的活動已有商品被提名或投票，不可刪除" : "刪除類別與其中商品"} onClick={() => onDelete(row)}>刪除</button></div></article>; })}</div></section>;
+    const [locationDrafts, setLocationDrafts] = useState<Record<string, string>>({});
+    useEffect(() => { setDrafts(Object.fromEntries(categories.map(c => [c.id, c.name]))); setLocationDrafts(Object.fromEntries(categories.map(c => [c.id, c.work_location_id ?? projectOfficeId]))); }, [categories, projectOfficeId]);
+    useEffect(() => { if (!newLocationId && projectOfficeId) setNewLocationId(projectOfficeId); }, [newLocationId, projectOfficeId]);
+    function submit(event: FormEvent) { event.preventDefault(); const clean = newName.trim(); if (!clean || !newLocationId)
+        return; onAdd(clean, newLocationId); setNewName(""); }
+    return <section className="admin-card category-manager"><div className="card-title"><div><p className="section-kicker">PRODUCT CATEGORIES</p><h2>商品類別</h2></div><span className="count-tag">{categories.length} 類</span></div><p className="panel-help">每個類別只會出現在相同工作地點的活動與商品表單。既有類別預設為「專案辦公室」。</p><form className="category-add category-add-with-location" onSubmit={submit}><input value={newName} onChange={e => setNewName(e.target.value)} maxLength={80} placeholder="輸入新類別名稱"/><select required value={newLocationId} onChange={e => setNewLocationId(e.target.value)}><option value="" disabled>選擇工作地點</option>{locations.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select><button disabled={busy || !newName.trim() || !newLocationId}>＋ 新增類別</button></form><div className="category-admin-list">{categories.map(row => { const related = products.filter(p => p.category === row.name); const ids = new Set(related.map(p => p.id)); const activeIds = new Set(currentCampaigns.map(c => c.id)); const used = [...nominations, ...votes].some(x => activeIds.has(x.campaign_id) && ids.has(x.product_id)); const draft = drafts[row.id] ?? row.name; const locationDraft = locationDrafts[row.id] ?? row.work_location_id ?? projectOfficeId; return <article key={row.id} className={used ? "protected" : ""}><span className="category-symbol">{icons[row.name] ?? "✦"}</span><label><small>類別名稱</small><input value={draft} maxLength={80} onChange={e => setDrafts(x => ({ ...x, [row.id]: e.target.value }))}/></label><label className="category-location"><small>工作地點</small><select value={locationDraft} onChange={e => setLocationDrafts(x => ({ ...x, [row.id]: e.target.value }))}>{locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label><span className="category-count"><strong>{related.length}</strong> 項商品</span>{used && <span className="category-lock">活動使用中</span>}<div><button disabled={busy || !draft.trim() || draft.trim() === row.name} onClick={() => onRename(row, draft)}>儲存名稱</button><button disabled={busy || !locationDraft || locationDraft === row.work_location_id} onClick={() => onLocationChange(row, locationDraft)}>儲存地點</button><button className="danger" disabled={busy || used} title={used ? "進行中的活動已有商品被提名或投票，不可刪除" : "刪除類別與其中商品"} onClick={() => onDelete(row)}>刪除</button></div></article>; })}</div></section>;
 }
 function ProductEditor({ product, categories, locations, selectedLocationIds, busy, onClose, onSave }: {
     product: Product;
