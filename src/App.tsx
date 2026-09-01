@@ -48,6 +48,7 @@ type Campaign = {
     purchase_plan_locked_at: string | null;
     purchase_plan_locked_by: string | null;
     purchase_plan_generated_at: string | null;
+    purchase_plan_rank_limit: number | null;
     purchase_expected_arrival_date: string | null;
 };
 type Product = {
@@ -260,9 +261,10 @@ export default function App() {
         return () => window.removeEventListener("hashchange", handleRouteChange);
     }, []);
     useEffect(() => { if (!session || getSessionMode() !== "shared")
-        return; let timer = 0; let lastReset = 0; const signOutForIdle = () => void supabase.auth.signOut(); const reset = () => { const now = Date.now(); if (now - lastReset < 15000)
+        return; let timer = 0; let lastReset = 0; const signOutForIdle = () => void supabase.auth.signOut({ scope: "local" }); const reset = () => { const now = Date.now(); if (now - lastReset < 15000)
         return; lastReset = now; window.clearTimeout(timer); timer = window.setTimeout(signOutForIdle, 30 * 60 * 1000); }; const events = ["pointerdown", "keydown", "touchstart", "scroll"] as const; events.forEach(event => window.addEventListener(event, reset, { passive: true })); reset(); return () => { window.clearTimeout(timer); events.forEach(event => window.removeEventListener(event, reset)); }; }, [session?.user.id]);
     useEffect(() => {
+        let cancelled = false;
         if (!session) {
             setEmployee(null);
             setDenied(false);
@@ -270,8 +272,55 @@ export default function App() {
             return;
         }
         setLoading(true);
-        supabase.from("employees").select("id,name,email,role,active,work_location_id").eq("user_id", session.user.id).maybeSingle()
-            .then(({ data, error }) => { setEmployee(data as Employee | null); setDenied(!data || Boolean(error)); setLoading(false); });
+        void (async () => {
+            const latest = await supabase.rpc("is_current_auth_session");
+            if (cancelled)
+                return;
+            if (latest.error && latest.error.code !== "PGRST202") {
+                setEmployee(null);
+                setDenied(true);
+                setLoading(false);
+                return;
+            }
+            if (!latest.error && latest.data !== true) {
+                await supabase.auth.signOut({ scope: "local" });
+                return;
+            }
+            // Keep the new session, revoke refresh tokens belonging to older devices.
+            // Database policies also reject their still-unexpired access tokens.
+            if (!latest.error)
+                await supabase.auth.signOut({ scope: "others" });
+            const { data, error } = await supabase.from("employees").select("id,name,email,role,active,work_location_id").eq("user_id", session.user.id).maybeSingle();
+            if (cancelled)
+                return;
+            setEmployee(data as Employee | null);
+            setDenied(!data || Boolean(error));
+            setLoading(false);
+        })();
+        return () => { cancelled = true; };
+    }, [session?.user.id]);
+    useEffect(() => {
+        if (!session)
+            return;
+        let checking = false;
+        const check = async () => {
+            if (checking)
+                return;
+            checking = true;
+            const { data, error } = await supabase.rpc("is_current_auth_session");
+            checking = false;
+            if (!error && data !== true)
+                await supabase.auth.signOut({ scope: "local" });
+        };
+        const onVisible = () => { if (document.visibilityState === "visible") void check(); };
+        const timer = window.setInterval(() => void check(), 15000);
+        window.addEventListener("focus", check);
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            window.clearInterval(timer);
+            window.removeEventListener("focus", check);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
     }, [session?.user.id]);
     if (!isSupabaseConfigured)
         return <SetupScreen />;
@@ -288,6 +337,7 @@ export default function App() {
 }
 function SetupScreen() { return <main className="system-card"><p className="section-kicker">連線設定</p><h1>網站程式已準備連接 Supabase</h1><p>請建立 <code>.env.local</code>，填入 Project URL 與 Publishable Key，再重新啟動網站。</p><code>VITE_SUPABASE_URL=...<br />VITE_SUPABASE_PUBLISHABLE_KEY=...</code></main>; }
 function Login() {
+    const { ask, element: confirmElement } = useConfirmDialog();
     const [email, setEmail] = useState("");
     const [token, setToken] = useState("");
     const [step, setStep] = useState<"email" | "otp">("email");
@@ -304,7 +354,7 @@ function Login() {
     }, [resendIn]);
     function applySessionMode() { setSessionMode(shared ? "shared" : "personal"); }
     function showError(text: string) { setError(true); setMessage(text); }
-    async function sendOtp(e?: FormEvent) {
+    async function sendOtp(e?: FormEvent, confirmNewDevice = true) {
         e?.preventDefault();
         setBusy(true);
         setMessage("");
@@ -319,6 +369,14 @@ function Login() {
         if (!allowed.data) {
             setBusy(false);
             return showError("此 Email 不在啟用的員工名單中，系統不會寄出登入信。");
+        }
+        if (confirmNewDevice && !await ask({
+            title: "要在這台裝置登入嗎？",
+            items: ["完成登入後，這個帳號在其他電腦、手機或瀏覽器的登入會自動失效。", "這項設計可以避免同一帳號同時留在多台裝置上。"],
+            confirmLabel: "確認並寄送登入信"
+        })) {
+            setBusy(false);
+            return;
         }
         const { error } = await supabase.auth.signInWithOtp({ email: normalized, options: { shouldCreateUser: true, emailRedirectTo: appEntryUrl() } });
         setBusy(false);
@@ -367,19 +425,19 @@ function Login() {
           <p>登入信已寄到 <strong>{email}</strong>。首次登入可直接點擊信中連結；若信中提供驗證碼，請在下方輸入。</p>
           <label>登入驗證碼<input className="otp-input" type="text" required inputMode="numeric" autoComplete="one-time-code" minLength={6} maxLength={10} pattern="[0-9]{6,10}" value={token} onChange={e => setToken(e.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="00000000" autoFocus/></label>
           <button className="auth-submit" disabled={busy || token.length < 6}>{busy ? "驗證中…" : "驗證並登入"}</button>
-          <button type="button" className="resend-code" disabled={busy || resendIn > 0} onClick={() => void sendOtp()}>{resendIn > 0 ? `${resendIn} 秒後可重新寄送` : "重新寄送登入信"}</button>
+          <button type="button" className="resend-code" disabled={busy || resendIn > 0} onClick={() => void sendOtp(undefined, false)}>{resendIn > 0 ? `${resendIn} 秒後可重新寄送` : "重新寄送登入信"}</button>
         </form>}
         {message && <p className={`auth-message ${error ? "error" : ""}`}>{message}</p>}
         <small className="auth-note">系統只會寄信給啟用名單中的 Email。個人電腦會保留登入；共用裝置請開啟共用模式。</small>
       </div>
-    </section>
+    </section>{confirmElement}
   </main>;
 }
 function TextSizeControl() { const [large, setLarge] = useState(() => localStorage.getItem("snack-vote-text-size") === "large"); useEffect(() => { document.documentElement.dataset.textSize = large ? "large" : "comfortable"; localStorage.setItem("snack-vote-text-size", large ? "large" : "comfortable"); }, [large]); return <div className="text-size-control" aria-label="文字大小"><span>文字</span><button type="button" className={!large ? "active" : ""} onClick={() => setLarge(false)}>一般</button><button type="button" className={large ? "active" : ""} onClick={() => setLarge(true)}>放大</button></div>; }
 function Unauthorized({ email, adminOnly = false }: {
     email: string;
     adminOnly?: boolean;
-}) { return <main className="system-card"><p className="section-kicker">ACCESS CONTROL</p><h1>{adminOnly ? "這個頁面僅限管理者" : "此 Email 不在啟用名單中"}</h1><p>{email}</p><p>{adminOnly ? "你仍可回到員工頁面。" : "請聯絡管理者確認名單，完成後重新登入。"}</p><button className="auth-submit" onClick={() => adminOnly ? location.hash = "#/" : supabase.auth.signOut()}>{adminOnly ? "回員工頁面" : "登出"}</button></main>; }
+}) { return <main className="system-card"><p className="section-kicker">ACCESS CONTROL</p><h1>{adminOnly ? "這個頁面僅限管理者" : "此 Email 不在啟用名單中"}</h1><p>{email}</p><p>{adminOnly ? "你仍可回到員工頁面。" : "請聯絡管理者確認名單，完成後重新登入。"}</p><button className="auth-submit" onClick={() => adminOnly ? location.hash = "#/" : supabase.auth.signOut({ scope: "local" })}>{adminOnly ? "回員工頁面" : "登出"}</button></main>; }
 function EmployeeApp({ employee, route }: {
     employee: Employee;
     route: string;
@@ -680,7 +738,7 @@ function ShellHeader({ employee, children, currentPage = "campaign" }: {
     employee: Employee;
     children: React.ReactNode;
     currentPage?: "campaign" | "history" | "feedback";
-}) { const shared = getSessionMode() === "shared"; return <main className="employee-shell"><header className="topbar"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><nav className="employee-page-nav" aria-label="主要功能"><a href="#/" className={currentPage === "campaign" ? "active" : ""}>本期活動</a><a href="#/history" className={currentPage === "history" ? "active" : ""}>近三期回顧</a><a href="#/feedback" className={currentPage === "feedback" ? "active" : ""}>意見問卷</a></nav><div className="top-actions"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{shared ? "共用電腦模式" : "此瀏覽器已登入"}</span>{employee.role === "admin" && <a href="#/admin">管理後台</a>}<button onClick={() => supabase.auth.signOut()}>登出</button><div className="profile"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>{employee.email}{shared ? " · 閒置 30 分鐘自動登出" : ""}</small></div></div></div></header>{children}<footer>商品與價格僅供採購參考，實際售價及庫存以門市為準。</footer></main>; }
+}) { const shared = getSessionMode() === "shared"; return <main className="employee-shell"><header className="topbar"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><nav className="employee-page-nav" aria-label="主要功能"><a href="#/" className={currentPage === "campaign" ? "active" : ""}>本期活動</a><a href="#/history" className={currentPage === "history" ? "active" : ""}>近三期回顧</a><a href="#/feedback" className={currentPage === "feedback" ? "active" : ""}>意見問卷</a></nav><div className="top-actions"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{shared ? "共用電腦模式" : "此瀏覽器已登入"}</span>{employee.role === "admin" && <a href="#/admin">管理後台</a>}<button onClick={() => supabase.auth.signOut({ scope: "local" })}>登出</button><div className="profile"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>{employee.email}{shared ? " · 閒置 30 分鐘自動登出" : ""}</small></div></div></div></header>{children}<footer>商品與價格僅供採購參考，實際售價及庫存以門市為準。</footer></main>; }
 function Timeline({ campaign, phase }: {
     campaign: Campaign;
     phase: Phase;
@@ -1000,12 +1058,16 @@ function AdminApp({ employee }: {
     finally {
         setBusy(false);
     } }
-    async function generatePurchase() { if (!purchaseCampaign)
-        return flash("請先選擇採購活動"); setBusy(true); const { data, error } = await supabase.rpc("generate_purchase_plan", { p_campaign_id: purchaseCampaign.id }); setBusy(false); if (error)
+    async function generatePurchase(rankLimit: number) { if (!purchaseCampaign)
+        return flash("請先選擇採購活動"); if (!Number.isInteger(rankLimit) || rankLimit < 1 || rankLimit > 100)
+        return flash("採購名次必須是 1 到 100 的整數"); setBusy(true); const saved = await supabase.from("campaigns").update({ purchase_plan_rank_limit: rankLimit }).eq("id", purchaseCampaign.id).is("purchase_plan_locked_at", null).select("id").maybeSingle(); if (saved.error || !saved.data) {
+        setBusy(false);
+        return flash(saved.error?.message ?? "採購清單已鎖定，無法變更名次範圍");
+    } const { data, error } = await supabase.rpc("generate_purchase_plan", { p_campaign_id: purchaseCampaign.id }); setBusy(false); if (error)
         return flash(error.message); const result = data as {
         remaining: number;
         missing_prices: number;
-    }; flash(result.missing_prices ? `${purchaseCampaign.label} 清單已產生；${result.missing_prices} 項尚未設定價格，因此未配置數量` : `${purchaseCampaign.label} 清單已產生，預算餘額 NT$ ${Number(result.remaining).toLocaleString()}`); await load(); }
+    }; flash(result.missing_prices ? `${purchaseCampaign.label} 已依前 ${rankLimit} 名產生清單；${result.missing_prices} 項尚未設定價格，因此未配置數量` : `${purchaseCampaign.label} 已依前 ${rankLimit} 名產生清單，預算餘額 NT$ ${Number(result.remaining).toLocaleString()}`); await load(); }
     async function updatePurchase(row: PurchaseItem, patch: Partial<PurchaseItem>) { const { error } = await supabase.from("purchase_items").update(patch).eq("id", row.id); if (error) {
         flash(error.message);
         return false;
@@ -1040,7 +1102,7 @@ function AdminApp({ employee }: {
         setSelectedCampaignId(null); if (editingCampaign?.id === row.id)
         setEditingCampaign(null); flash(`已永久刪除「${row.label}」及其活動資料`); await load(); }
     const title = adminTabs.find(x => x.id === tab)?.label ?? "管理總覽";
-    return <main className="admin-shell"><aside className="admin-nav"><div className="brand admin-brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>管理後台</small></div></div><nav>{adminTabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span>{item.label}{item.id === "pending" && pending.length > 0 && <b className="nav-badge">{pending.length}</b>}</button>)}<a href="#/"><button><span>←</span>回員工頁面</button></a></nav><div className="admin-user"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>系統管理者</small></div></div></aside><section className="admin-main"><header className="admin-top"><div><p className="section-kicker">ADMIN CONSOLE</p><h1>{title}</h1></div><div className="admin-status"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{getSessionMode() === "shared" ? "共用電腦模式" : "此瀏覽器已登入"}</span>{latest && <span className={`status-pill ${phaseOf(latest)}`}>{latest.label} · {phaseLabel(phaseOf(latest))}</span>}<button className="table-action" onClick={() => supabase.auth.signOut()}>登出</button></div></header>{message && <div className="admin-toast">{message}</div>}<div className="admin-content">
+    return <main className="admin-shell"><aside className="admin-nav"><div className="brand admin-brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>管理後台</small></div></div><nav>{adminTabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><span>{item.icon}</span>{item.label}{item.id === "pending" && pending.length > 0 && <b className="nav-badge">{pending.length}</b>}</button>)}<a href="#/"><button><span>←</span>回員工頁面</button></a></nav><div className="admin-user"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>系統管理者</small></div></div></aside><section className="admin-main"><header className="admin-top"><div><p className="section-kicker">ADMIN CONSOLE</p><h1>{title}</h1></div><div className="admin-status"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{getSessionMode() === "shared" ? "共用電腦模式" : "此瀏覽器已登入"}</span>{latest && <span className={`status-pill ${phaseOf(latest)}`}>{latest.label} · {phaseLabel(phaseOf(latest))}</span>}<button className="table-action" onClick={() => supabase.auth.signOut({ scope: "local" })}>登出</button></div></header>{message && <div className="admin-toast">{message}</div>}<div className="admin-content">
     {tab === "overview" && <><div className="stat-grid"><article><span>啟用員工</span><strong>{employees.filter(e => e.active).length}</strong><small>人</small></article><article><span>活動紀錄</span><strong>{campaigns.length}</strong><small>期</small></article><article><span>啟用商品</span><strong>{catalogProducts.filter(p => p.active && p.approval_status === "approved").length}</strong><small>項</small></article><article><span>待審商品</span><strong>{pending.length}</strong><small>項</small></article></div><div className="admin-two"><section className="admin-card"><div className="card-title"><div><p className="section-kicker">CURRENT CAMPAIGN</p><h2>{latest?.label ?? "尚未建立本期活動"}</h2></div>{latest && <button onClick={() => setTab("campaign")}>編輯設定 →</button>}</div>{latest ? <><Timeline campaign={latest} phase={phaseOf(latest)}/><div className="rule-note"><strong>本期規則</strong><span>預算 NT$ {Number(latest.budget).toLocaleString()} · 每人提名 {latest.nomination_limit} 項 · 共 {latest.vote_limit} 票</span></div></> : <div className="admin-empty"><button className="solid-button" onClick={() => setTab("campaign")}>建立第一期活動</button></div>}</section><section className="admin-card"><div className="card-title"><div><p className="section-kicker">QUICK ACTIONS</p><h2>接下來要處理</h2></div></div><div className="quick-list"><button onClick={() => setTab("pending")}><strong>{pending.length}</strong><span>筆待審商品</span><em>前往審核 →</em></button><button onClick={() => setTab("purchase")}><strong>{latest ? votes.filter(v => v.campaign_id === latest.id).length : 0}</strong><span>張本期票數</span><em>安排採購 →</em></button><button onClick={() => setTab("employees")}><strong>{employees.filter(e => e.active).length}</strong><span>位啟用員工</span><em>管理名單 →</em></button></div></section></div></>}
     {tab === "campaign" && <><div className="section-actions"><div><p>{newCampaign ? "設定新一期活動；既有活動會保留在歷史紀錄。" : "目前顯示啟用中的本期活動；此處金額與採購清單使用同一筆資料。"}</p>{!newCampaign && <select className="campaign-switch" value={campaignForForm?.id ?? ""} onChange={e => { setSelectedCampaignId(e.target.value); setEditingCampaign(null); }}>{campaigns.map(c => <option key={c.id} value={c.id}>{locationNames(campaignLocations.filter(row => row.campaign_id === c.id).map(row => row.work_location_id), workLocations)}｜{c.label}</option>)}</select>}</div><button className="solid-button" onClick={() => { setNewCampaign(x => !x); setEditingCampaign(null); }}>{newCampaign ? "取消建立新活動" : "＋ 建立下一期"}</button></div><CampaignForm key={newCampaign ? "new" : campaignForForm ? `${campaignForForm.id}:${campaignForForm.description}:${campaignForForm.base_budget}:${campaignForForm.carryover_enabled}:${campaignForForm.retain_unused_budget}:${campaignForForm.carryover_amount}:${campaignForForm.budget}:${campaignForForm.start_at}:${campaignForForm.nomination_deadline}:${campaignForForm.voting_deadline}:${campaignForForm.purchase_at}:${campaignForForm.nomination_limit}:${campaignForForm.vote_limit}:${campaignForForm.status}` : "empty"} campaign={newCampaign ? null : campaignForForm} locations={workLocations} selectedLocationIds={newCampaign ? [] : campaignLocations.filter(row => row.campaign_id === campaignForForm?.id).map(row => row.work_location_id)} busy={busy} onSubmit={saveCampaign}/>{!newCampaign && campaignForForm && <CampaignNotificationPanel campaign={campaignForForm} deliveries={campaignNotifications} busy={notifyingCampaignId === campaignForForm.id} onSend={sendCampaignNotification}/>} {!newCampaign && campaignForForm && <CampaignMemberPanel campaign={campaignForForm} employees={employees} members={members} employeeLocations={employeeLocations} campaignLocations={campaignLocations} onToggle={toggleCampaignMember}/>}</>}
 {tab === "employees" && <section className="admin-card">
@@ -1328,13 +1390,13 @@ function PurchasePanel({ campaign, products, purchases, busy, onGenerate, onUpda
     products: Product[];
     purchases: PurchaseItem[];
     busy: boolean;
-    onGenerate: () => void;
+    onGenerate: (rankLimit: number) => void;
     onUpdate: (row: PurchaseItem, patch: Partial<PurchaseItem>) => Promise<boolean>;
     onSetLocked: (locked: boolean) => void;
     onUpdateArrival: (value: string) => void;
-}) { const [pendingRows, setPendingRows] = useState<Set<string>>(() => new Set()); const reportPending = useCallback((id: string, pending: boolean) => setPendingRows(current => { const next = new Set(current); pending ? next.add(id) : next.delete(id); if (next.size === current.size && [...next].every(value => current.has(value)))
+}) { const [pendingRows, setPendingRows] = useState<Set<string>>(() => new Set()); const [rankLimitDraft, setRankLimitDraft] = useState(String(campaign?.purchase_plan_rank_limit ?? 5)); useEffect(() => { setRankLimitDraft(String(campaign?.purchase_plan_rank_limit ?? 5)); }, [campaign?.id, campaign?.purchase_plan_rank_limit]); const reportPending = useCallback((id: string, pending: boolean) => setPendingRows(current => { const next = new Set(current); pending ? next.add(id) : next.delete(id); if (next.size === current.size && [...next].every(value => current.has(value)))
     return current; return next; }), []); if (!campaign)
-    return <section className="admin-card"><div className="admin-empty">請先建立本期活動。</div></section>; const rows = purchases.filter(p => p.campaign_id === campaign.id); const total = rows.reduce((sum, row) => sum + Number(row.unit_price) * Number(row.final_quantity ?? row.suggested_quantity), 0); const remaining = Number(campaign.budget) - total; const locked = Boolean(campaign.purchase_plan_locked_at); const buyingRows = rows.filter(row => Number(row.final_quantity ?? row.suggested_quantity) > 0); const completed = locked && buyingRows.length > 0 && buyingRows.every(row => row.purchased); const hasPending = pendingRows.size > 0; return <><div className="purchase-summary"><div><span>本期可用預算 · {campaign.label}</span><strong>NT$ {Number(campaign.budget).toLocaleString()}</strong><small>基本 NT$ {Number(campaign.base_budget ?? campaign.budget).toLocaleString()}{campaign.carryover_enabled ? ` ＋ 使用上期保留 NT$ ${Number(campaign.carryover_amount).toLocaleString()}` : " · 未使用上期保留"}{campaign.retain_unused_budget ? " · 本期餘額將保留" : " · 本期餘額不保留"}</small></div><div><span>目前清單金額</span><strong>NT$ {total.toLocaleString()}</strong></div><div className={remaining < 0 ? "over-budget" : ""}><span>{remaining < 0 ? "超出預算" : "預算餘額"}</span><strong>NT$ {Math.abs(remaining).toLocaleString()}</strong></div></div><section className="admin-card"><div className="card-title purchase-title"><div><p className="section-kicker">PURCHASE PLAN</p><h2>{campaign.label} 採購清單</h2><span className={`purchase-plan-state ${completed ? "completed" : locked ? "locked" : "draft"}`}>{completed ? "✓ 本期採購完成" : locked ? "已鎖定 · 待採購" : "草稿 · 票數異動時自動更新"}</span></div><div className="purchase-plan-actions">{locked && <label className="arrival-editor"><span>預計到貨日期（選填）</span><input type="date" value={campaign.purchase_expected_arrival_date ?? ""} onChange={e => onUpdateArrival(e.target.value)}/></label>}<button className="recalculate-button" disabled={locked || hasPending || busy} onClick={onGenerate}>{rows.length ? "重新計算建議" : "產生採購建議"}</button>{rows.length && <button className={locked ? "unlock-button" : "lock-button"} disabled={hasPending || busy} onClick={() => onSetLocked(!locked)}>{locked ? "解鎖修改" : "儲存並鎖定清單"}</button>}</div></div>{hasPending && <div className="purchase-pending-note">尚有欄位未儲存；請按 Enter 或點到欄位外，完成儲存後即可鎖定。</div>}<div className="rule-note purchase-rule"><strong>{locked ? "清單已固定" : "分配規則"}</strong><span>{locked ? "單價、數量及排名已鎖定。請依實際採購進度逐項標記「已採購」；如需變更內容，請先解鎖。" : "未鎖定期間，票數變更會自動重算前 5 名及採購數量；既有商品人工調整的採購單價會保留，新入選商品採用參考價。"}</span></div>{rows.length ? <div className="table-wrap"><table><thead><tr><th>排名</th><th>商品</th><th>票數</th><th>採購單價</th><th>採購數量</th><th>小計</th><th>採購狀態</th></tr></thead><tbody>{rows.map(row => <PurchaseRow key={row.id} row={row} product={products.find(p => p.id === row.product_id)} locked={locked} onUpdate={onUpdate} onPendingChange={reportPending}/>)}</tbody></table></div> : <div className="admin-empty">投票結束後，按「產生採購建議」。請先在商品資料庫確認前五名商品的參考價格。</div>}</section></>; }
+    return <section className="admin-card"><div className="admin-empty">請先建立本期活動。</div></section>; const rows = purchases.filter(p => p.campaign_id === campaign.id); const total = rows.reduce((sum, row) => sum + Number(row.unit_price) * Number(row.final_quantity ?? row.suggested_quantity), 0); const remaining = Number(campaign.budget) - total; const locked = Boolean(campaign.purchase_plan_locked_at); const buyingRows = rows.filter(row => Number(row.final_quantity ?? row.suggested_quantity) > 0); const completed = locked && buyingRows.length > 0 && buyingRows.every(row => row.purchased); const hasPending = pendingRows.size > 0; const rankLimit = Number(rankLimitDraft); const validRankLimit = Number.isInteger(rankLimit) && rankLimit >= 1 && rankLimit <= 100; return <><div className="purchase-summary"><div><span>本期可用預算 · {campaign.label}</span><strong>NT$ {Number(campaign.budget).toLocaleString()}</strong><small>基本 NT$ {Number(campaign.base_budget ?? campaign.budget).toLocaleString()}{campaign.carryover_enabled ? ` ＋ 使用上期保留 NT$ ${Number(campaign.carryover_amount).toLocaleString()}` : " · 未使用上期保留"}{campaign.retain_unused_budget ? " · 本期餘額將保留" : " · 本期餘額不保留"}</small></div><div><span>目前清單金額</span><strong>NT$ {total.toLocaleString()}</strong></div><div className={remaining < 0 ? "over-budget" : ""}><span>{remaining < 0 ? "超出預算" : "預算餘額"}</span><strong>NT$ {Math.abs(remaining).toLocaleString()}</strong></div></div><section className="admin-card"><div className="card-title purchase-title"><div><p className="section-kicker">PURCHASE PLAN</p><h2>{campaign.label} 採購清單</h2><span className={`purchase-plan-state ${completed ? "completed" : locked ? "locked" : "draft"}`}>{completed ? "✓ 本期採購完成" : locked ? "已鎖定 · 待採購" : "草稿 · 票數異動時自動更新"}</span></div><div className="purchase-plan-actions"><label className="purchase-rank-limit"><span>建議採購名次</span><span className="rank-limit-input">前 <input aria-label="採購名次上限" type="number" min="1" max="100" step="1" value={rankLimitDraft} disabled={locked || busy} onChange={e => setRankLimitDraft(e.target.value)}/> 名</span></label>{locked && <label className="arrival-editor"><span>預計到貨日期（選填）</span><input type="date" value={campaign.purchase_expected_arrival_date ?? ""} onChange={e => onUpdateArrival(e.target.value)}/></label>}<button className="recalculate-button" disabled={locked || hasPending || busy || !validRankLimit} onClick={() => onGenerate(rankLimit)}>{rows.length ? "重新計算建議" : "產生採購建議"}</button>{rows.length && <button className={locked ? "unlock-button" : "lock-button"} disabled={hasPending || busy} onClick={() => onSetLocked(!locked)}>{locked ? "解鎖修改" : "儲存並鎖定清單"}</button>}</div></div>{hasPending && <div className="purchase-pending-note">尚有欄位未儲存；請按 Enter 或點到欄位外，完成儲存後即可鎖定。</div>}<div className="rule-note purchase-rule"><strong>{locked ? `清單已固定 · 取前 ${campaign.purchase_plan_rank_limit ?? rankLimit} 名` : "分配規則"}</strong><span>{locked ? "單價、數量及排名已鎖定。請依實際採購進度逐項標記「已採購」；如需變更內容，請先解鎖。" : `未鎖定期間，票數變更會自動重算前 ${validRankLimit ? rankLimit : "—"} 名及採購數量；同票並列名次會一併納入。既有商品人工調整的採購單價會保留，新入選商品採用參考價。`}</span></div>{rows.length ? <div className="table-wrap"><table><thead><tr><th>排名</th><th>商品</th><th>票數</th><th>採購單價</th><th>採購數量</th><th>小計</th><th>採購狀態</th></tr></thead><tbody>{rows.map(row => <PurchaseRow key={row.id} row={row} product={products.find(p => p.id === row.product_id)} locked={locked} onUpdate={onUpdate} onPendingChange={reportPending}/>)}</tbody></table></div> : <div className="admin-empty">投票結束後，確認要採用的名次範圍，再按「產生採購建議」。請先在商品資料庫確認入選商品的參考價格。</div>}</section></>; }
 function BudgetReportPanel({ campaigns, locations, purchases, products, votes }: {
     campaigns: Campaign[];
     locations: WorkLocation[];
