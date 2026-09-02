@@ -35,6 +35,17 @@
 .category-admin-list .category-location select{height:31px;background:#fbfcf9}
 @media(max-width:900px){.category-add.category-add-with-location{grid-template-columns:1fr 1fr}.category-add.category-add-with-location button{min-height:40px}.category-admin-list article{grid-template-columns:38px minmax(0,1fr) minmax(140px,.75fr) auto}.category-admin-list article>div{grid-column:2/-1}}
 @media(max-width:650px){.category-add.category-add-with-location{grid-template-columns:1fr}.category-admin-list article{grid-template-columns:38px minmax(0,1fr)}.category-admin-list .category-location,.category-admin-list .category-count,.category-admin-list .category-lock{grid-column:2}.category-admin-list article>div{grid-column:1/-1;flex-wrap:wrap}}
+
+/* Align every category card even when product counts or status badges differ. */
+.category-admin-list article{grid-template-columns:38px minmax(120px,1fr) 150px 52px 70px;grid-template-rows:40px 32px;align-items:center;min-height:104px}
+.category-admin-list article>.category-symbol{grid-column:1;grid-row:1}
+.category-admin-list article>label:not(.category-location){grid-column:2;grid-row:1;min-width:0}
+.category-admin-list article>.category-location{grid-column:3;grid-row:1;min-width:0}
+.category-admin-list article>.category-count{grid-column:4;grid-row:1;justify-self:end;text-align:right}
+.category-admin-list article>.category-lock{grid-column:5;grid-row:1;justify-self:end}
+.category-admin-list article>div{grid-column:2/-1;grid-row:2;align-self:end;min-height:30px}
+@media(max-width:900px){.category-admin-list article{grid-template-columns:38px minmax(150px,1fr) 180px 58px 76px}}
+@media(max-width:650px){.category-admin-list article{grid-template-columns:38px minmax(0,1fr);grid-template-rows:auto auto auto auto auto;align-items:start}.category-admin-list article>.category-symbol{grid-column:1;grid-row:1}.category-admin-list article>label:not(.category-location){grid-column:2;grid-row:1}.category-admin-list article>.category-location{grid-column:2;grid-row:2;margin-top:8px}.category-admin-list article>.category-count{grid-column:2;grid-row:3;justify-self:start;margin-top:8px;text-align:left}.category-admin-list article>.category-lock{grid-column:2;grid-row:4;justify-self:start;margin-top:7px}.category-admin-list article>div{grid-column:1/-1;grid-row:5;margin-top:10px}}
 .history-maintain>div{display:flex;gap:7px;flex:0 0 auto}.history-maintain .history-delete{border-color:#a84f39;background:#fff4ef;color:#9b412d}.history-maintain .history-delete:hover{background:#a84f39;color:#fff}@media(max-width:650px){.history-maintain>div{width:100%;flex-direction:column}.history-maintain>div button{width:100%}}
 
 /* Keep the two rollover decisions on the same visual level. */
