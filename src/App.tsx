@@ -747,7 +747,37 @@ function ShellHeader({ employee, children, currentPage = "campaign" }: {
 function Timeline({ campaign, phase }: {
     campaign: Campaign;
     phase: Phase;
-}) { const index = { upcoming: -1, nomination: 0, voting: 1, results: 2, purchase: 3 }[phase]; const items = [["開始", campaign.start_at], ["提名截止", campaign.nomination_deadline], ["投票截止", campaign.voting_deadline], ["安排採購", campaign.purchase_at]]; return <div className="timeline-panel"><div className="milestone-row">{items.map((x, i) => <div key={x[0]} className={`milestone ${i <= index ? "done" : ""} ${i === index ? "current" : ""}`}><span>{i + 1}</span><strong>{x[0]}</strong><small>{shortDate(x[1])}</small></div>)}</div><div className="period-row"><div className={`period ${phase === "nomination" ? "active" : ""}`}><strong>提名階段</strong><small>{shortDate(campaign.start_at)}–{shortDate(campaign.nomination_deadline)}</small></div><div className={`period ${phase === "voting" ? "active" : ""}`}><strong>投票階段</strong><small>{shortDate(campaign.nomination_deadline)}–{shortDate(campaign.voting_deadline)}</small></div><div className={`period ${phase === "results" ? "active" : ""}`}><strong>結果揭曉階段</strong><small>{shortDate(campaign.voting_deadline)}–{shortDate(campaign.purchase_at)}</small></div></div></div>; }
+}) { const index = { upcoming: -1, nomination: 0, voting: 1, results: 2, purchase: 3 }[phase]; const items = [["開始", campaign.start_at], ["提名截止", campaign.nomination_deadline], ["投票截止", campaign.voting_deadline], ["安排採購", campaign.purchase_at]]; return <div className="timeline-stack"><div className="timeline-panel"><div className="milestone-row">{items.map((x, i) => <div key={x[0]} className={`milestone ${i <= index ? "done" : ""} ${i === index ? "current" : ""}`}><span>{i + 1}</span><strong>{x[0]}</strong><small>{shortDate(x[1])}</small></div>)}</div><div className="period-row"><div className={`period ${phase === "nomination" ? "active" : ""}`}><strong>提名階段</strong><small>{shortDate(campaign.start_at)}–{shortDate(campaign.nomination_deadline)}</small></div><div className={`period ${phase === "voting" ? "active" : ""}`}><strong>投票階段</strong><small>{shortDate(campaign.nomination_deadline)}–{shortDate(campaign.voting_deadline)}</small></div><div className={`period ${phase === "results" ? "active" : ""}`}><strong>結果揭曉階段</strong><small>{shortDate(campaign.voting_deadline)}–{shortDate(campaign.purchase_at)}</small></div></div></div>{phase === "voting" && <VotingPulsePanel campaign={campaign}/>}</div>; }
+
+function VotingPulsePanel({ campaign }: { campaign: Campaign }) {
+    const [rows, setRows] = useState<Vote[]>([]);
+    const [productNames, setProductNames] = useState<Record<string, string>>({});
+    const [employeeId, setEmployeeId] = useState("");
+    const [expanded, setExpanded] = useState(true);
+    const load = useCallback(async () => {
+        const [{ data: voteRows }, { data: productRows }, { data: currentEmployee }] = await Promise.all([
+            supabase.from("votes").select("*").eq("campaign_id", campaign.id).order("created_at"),
+            supabase.from("products").select("id,brand,name"),
+            supabase.rpc("current_employee_id")
+        ]);
+        setRows((voteRows ?? []) as Vote[]);
+        setProductNames(Object.fromEntries((productRows ?? []).map(row => [row.id, `${row.brand ? `${row.brand} ` : ""}${row.name}`])));
+        setEmployeeId(String(currentEmployee ?? ""));
+    }, [campaign.id]);
+    useEffect(() => { void load(); const channel = supabase.channel(`voting-pulse-${campaign.id}`).on("postgres_changes", { event: "*", schema: "public", table: "votes", filter: `campaign_id=eq.${campaign.id}` }, () => void load()).subscribe(); return () => { void supabase.removeChannel(channel); }; }, [campaign.id, load]);
+    const counts = new Map<string, number>();
+    rows.forEach(row => counts.set(row.product_id, (counts.get(row.product_id) ?? 0) + 1));
+    const ranked = [...counts.entries()].map(([productId, count]) => ({ productId, count, name: productNames[productId] ?? "候選商品" })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-Hant"));
+    const top = ranked.slice(0, 3);
+    const maxVotes = Math.max(1, top[0]?.count ?? 0);
+    const participantNames = [...new Set(rows.map(row => row.voter_name))];
+    const myVotes = rows.filter(row => row.employee_id === employeeId).length;
+    const remaining = Math.max(0, Number(campaign.vote_limit) - myVotes);
+    const leadGap = (top[0]?.count ?? 0) - (top[1]?.count ?? 0);
+    const heatMessage = !rows.length ? "第一票就能讓喜歡的商品站上榜首" : top.length > 1 && leadGap === 0 ? "榜首同票，下一票就可能改變排名" : top.length > 1 && leadGap === 1 ? "前兩名只差 1 票，現在每票都很關鍵" : remaining > 0 ? `你還有 ${remaining} 票，可以讓喜歡的商品往前衝` : "你的票已全數投入，別忘了揪同事參與";
+    const jumpToVoting = () => document.querySelector(".filters-with-sort")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return <aside className={`voting-pulse ${expanded ? "expanded" : "collapsed"}`} aria-label="即時投票狀況"><button type="button" className="voting-pulse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><i/>LIVE</span><strong>{expanded ? "即時投票熱度" : `${rows.length} 票`}</strong><b>{expanded ? "－" : "＋"}</b></button>{expanded && <div className="voting-pulse-body"><div className="voting-pulse-metrics"><span><strong>{rows.length}</strong><small>目前票數</small></span><span><strong>{participantNames.length}</strong><small>參與人數</small></span><span className={remaining ? "attention" : "done"}><strong>{remaining}</strong><small>我的剩餘票</small></span></div><p className="voting-heat-message">{heatMessage}</p><div className="voting-leaders"><header><span>即時人氣榜</span><small>票數變動會自動更新</small></header>{top.length ? top.map((row, index) => <div className="voting-leader" key={row.productId}><b>{index + 1}</b><span><strong>{row.name}</strong><i><em style={{ width: `${Math.max(12, row.count / maxVotes * 100)}%` }}/></i></span><small>{row.count} 票</small></div>) : <div className="voting-pulse-empty">還沒有人投票，等你投下第一票。</div>}</div>{participantNames.length > 0 && <div className="voting-participants"><span>{participantNames.slice(-5).reverse().map(name => <i key={name} title={name}>{name.slice(0, 1)}</i>)}</span><small>{participantNames.length > 5 ? `還有 ${participantNames.length - 5} 位同仁已參與` : "投票熱度正在累積"}</small></div>}<button type="button" className="voting-pulse-cta" onClick={jumpToVoting}>{remaining > 0 ? "去投下關鍵一票" : "查看目前候選商品"}<span>↓</span></button><small className="voting-pulse-deadline">投票截止：{shortDate(campaign.voting_deadline)}</small></div>}</aside>;
+}
 type AdminTab = "overview" | "campaign" | "employees" | "locations" | "products" | "pending" | "purchase" | "budget" | "feedback" | "history";
 const adminTabs: {
     id: AdminTab;
