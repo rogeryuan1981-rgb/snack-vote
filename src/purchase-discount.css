@@ -1,0 +1,35 @@
+.purchase-summary.purchase-summary-with-discount { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.purchase-discount-card label { display:block; font-size:13px; font-weight:800; color:#466154; }
+.discount-input-wrap { display:flex; align-items:center; gap:8px; margin-top:10px; }
+.discount-input-wrap>span { font-size:20px; color:#153f31; }
+.discount-input-wrap input { width:100%; min-width:0; height:42px; padding:4px 8px; border:1px solid #aebfa7; border-radius:8px; background:#fff; color:#153f31; font-size:24px; font-weight:700; font-variant-numeric:tabular-nums; }
+.purchase-discount-card .discount-error { color:#a43a27; }
+.purchase-discount-card input[aria-invalid=true] { border-color:#a43a27; }
+.purchase-summary-with-discount>div { min-width:0; }
+.purchase-summary-with-discount small { display:block; margin-top:8px; line-height:1.5; }
+.purchase-plan-actions { align-items:flex-end; }
+.purchase-plan-actions>button,.purchase-plan-actions .rank-limit-input,.purchase-plan-actions .arrival-editor input { height:40px; min-height:40px; box-sizing:border-box; }
+.purchase-plan-actions .rank-limit-input input { min-height:0; }
+.employee-budget-summary.employee-budget-with-discount { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.history-overview.history-overview-with-discount { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.employee-budget-with-discount>div,.history-overview-with-discount>div { min-width:0; }
+@media(max-width:1100px) {
+  .purchase-summary.purchase-summary-with-discount { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .employee-budget-summary.employee-budget-with-discount,.history-overview.history-overview-with-discount { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+@media(max-width:760px) {
+  .purchase-plan-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end; }
+  .purchase-plan-actions .purchase-rank-limit { min-width:0; }
+  .purchase-plan-actions>button { padding-inline:8px; white-space:normal; }
+  .purchase-plan-actions .arrival-editor { grid-column:1/-1; }
+}
+@media(max-width:650px) {
+  .purchase-plan-actions>button,.purchase-plan-actions .rank-limit-input,.purchase-plan-actions .arrival-editor input { height:44px; min-height:44px; }
+  .discount-input-wrap input { min-height:44px; }
+  .employee-budget-summary.employee-budget-with-discount,.history-overview.history-overview-with-discount { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:420px) {
+  .purchase-summary.purchase-summary-with-discount { grid-template-columns:minmax(0,1fr); }
+  .purchase-plan-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .purchase-plan-actions .purchase-rank-limit { grid-column:1/-1; }
+}

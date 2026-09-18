@@ -9,6 +9,7 @@ import "../app/admin/status.css";
 import "./supabase.css";
 import "./campaign-enhancements.css";
 import "./platform-layout.css";
+import "./purchase-discount.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
