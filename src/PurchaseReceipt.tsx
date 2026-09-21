@@ -7,7 +7,7 @@ type Receipt = { purchase_arrival_status: Status; purchase_actual_arrival_date: 
 const labels: Record<Status, string> = { pending: "待到貨", partial: "部分到貨", arrived: "已到貨" };
 const bucket = "purchase-receipts";
 const formats: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-export function PurchaseReceipt({ campaignId, expectedDate, editable = false }: { campaignId: string; expectedDate: string | null; editable?: boolean }) {
+export function PurchaseReceipt({ campaignId, expectedDate, editable = false, onPendingChange }: { campaignId: string; expectedDate: string | null; editable?: boolean; onPendingChange?: (pending: boolean) => void }) {
     const [receipt, setReceipt] = useState<Receipt | null>(null);
     const [status, setStatus] = useState<Status>("pending");
     const [date, setDate] = useState("");
@@ -16,6 +16,9 @@ export function PurchaseReceipt({ campaignId, expectedDate, editable = false }: 
     const [notice, setNotice] = useState("");
     const [busy, setBusy] = useState(false);
     const guard = useRef(false);
+    useEffect(() => {
+        onPendingChange?.(busy || !receipt || status !== receipt.purchase_arrival_status || (status !== "pending" && date !== (receipt.purchase_actual_arrival_date ?? "")));
+    }, [busy, receipt, status, date, onPendingChange]);
     const mounted = useRef(true);
     const load = useCallback(async (syncDraft = true) => {
         const result = await supabase.from("campaigns").select("purchase_arrival_status,purchase_actual_arrival_date").eq("id", campaignId).single();
