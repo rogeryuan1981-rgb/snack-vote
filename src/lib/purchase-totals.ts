@@ -6,6 +6,6 @@ export function purchaseTotals(gross: number, discount = 0) {
 }
 
 export function validPurchaseDiscount(value: string, gross: number) {
-    return /^\d+(?:\.\d{1,2})?$/.test(value.trim()) && Number.isFinite(Number(value))
+    return /^\d+$/.test(value.trim()) && Number.isFinite(Number(value))
         && Number(value) >= 0 && Number(value) <= gross && Number(value) < 10000000000;
 }
