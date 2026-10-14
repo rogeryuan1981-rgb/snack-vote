@@ -1,3 +1,4 @@
+import { classifyReceiptPhotos } from "./lib/receipt-photos";
 import { useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import type { ReimbursementData, ReimbursementPhoto } from "./lib/reimbursement-pdf";
@@ -17,18 +18,19 @@ export async function loadReimbursementData(campaignId: string): Promise<Reimbur
     const productsResult = await supabase.from("products").select("id,brand,name").in("id", [...new Set(purchases.map(row => row.product_id))]);
     if (productsResult.error) throw new Error("無法讀取商品明細，請稍後重試。");
     const photos: ReimbursementPhoto[] = [];
+    const allFiles: {name: string; created_at: string | null}[] = [];
     const storage = supabase.storage.from("purchase-receipts");
     for (let offset = 0; ; offset += 100) {
         const files = await storage.list(campaignId, { limit: 100, offset, sortBy: { column: "name", order: "asc" } });
         if (files.error) throw new Error("無法取得驗收照片清單，PDF 未產生，請稍後重試。");
-        for (const file of files.data.filter(file => file.id)) {
-            const downloaded = await storage.download(`${campaignId}/${file.name}`);
-            if (downloaded.error || !downloaded.data) throw new Error("驗收照片下載失敗，PDF 未產生，請稍後重試。");
-            photos.push({ blob: downloaded.data, createdAt: file.created_at });
-        }
+        allFiles.push(...files.data.filter(file => file.id));
         if (files.data.length < 100) break;
     }
-    photos.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+    for (const file of classifyReceiptPhotos(allFiles)) {
+        const downloaded = await storage.download(campaignId + "/" + file.name);
+        if (downloaded.error || !downloaded.data) throw new Error("驗收照片下載失敗，PDF 未產生，請稍後重試。");
+        photos.push({ blob: downloaded.data, createdAt: file.created_at, kind: file.kind });
+    }
     return {
         campaignId: campaign.id, label: campaign.label, budget: Number(campaign.budget), discount: Number(campaign.purchase_discount_total ?? 0),
         arrivalStatus: campaign.purchase_arrival_status, actualArrival: campaign.purchase_actual_arrival_date,
@@ -60,5 +62,5 @@ export function PurchasePdfDownload({ campaignId, disabled, disabledReason }: { 
         } catch (error) { setFailed(true); setMessage(error instanceof Error ? error.message : "PDF 產生失敗，請稍後重試。"); }
         finally { guard.current = false; setLoading(false); }
     }
-    return <div className="purchase-pdf-toolbar"><div><strong>核銷附件</strong><p>下載本期採購明細、金額、到貨紀錄與驗收照片。</p>{disabled && <small>{disabledReason}</small>}{message && <p role={failed ? "alert" : "status"} className={failed ? "purchase-pdf-error" : ""}>{message}</p>}</div><button type="button" disabled={disabled || loading} onClick={() => void download()}>{loading ? "PDF 產生中…" : "下載核銷 PDF"}</button></div>;
+    return <div className="purchase-pdf-toolbar"><div><strong>核銷附件</strong><p>下載本期採購明細、金額、到貨紀錄與驗收照片。</p><small style={{ visibility: disabled ? "visible" : "hidden" }} aria-hidden={!disabled}>{disabledReason}</small>{message && <p role={failed ? "alert" : "status"} className={failed ? "purchase-pdf-error" : ""}>{message}</p>}</div><button type="button" disabled={disabled || loading} onClick={() => void download()}>{loading ? "PDF 產生中…" : "下載核銷 PDF"}</button></div>;
 }

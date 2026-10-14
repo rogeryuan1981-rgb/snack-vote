@@ -33,3 +33,22 @@
   .purchase-plan-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .purchase-plan-actions .purchase-rank-limit { grid-column:1/-1; }
 }
+/* Keep editing feedback in the layout so focus and autosave never move rows. */
+.purchase-pending-note.is-clear,.purchase-draft-note.is-clear{visibility:hidden}
+.purchase-draft-note{display:block;min-height:1.5em}
+.purchase-discount-card>small{min-height:3em}
+.purchase-summary-with-discount strong{font-variant-numeric:tabular-nums}
+.admin-card:has(.purchase-title) table{table-layout:fixed;width:100%;min-width:1000px}
+.admin-card:has(.purchase-title) th:nth-child(1){width:64px}
+.admin-card:has(.purchase-title) th:nth-child(3){width:70px}
+.admin-card:has(.purchase-title) th:nth-child(4){width:180px}
+.admin-card:has(.purchase-title) th:nth-child(5){width:100px}
+.admin-card:has(.purchase-title) th:nth-child(6){width:140px}
+.admin-card:has(.purchase-title) th:nth-child(7){width:140px}
+.admin-card:has(.purchase-title) .purchase-input-cell{display:grid;grid-template-rows:auto 18px;gap:4px;min-width:0}
+.admin-card:has(.purchase-title) .purchase-save-state,
+.admin-card:has(.purchase-title) .purchase-input-cell:not(:focus-within) .purchase-save-state.idle{display:block;line-height:18px;min-height:18px;white-space:nowrap;font-size:12px}
+.admin-card:has(.purchase-title) .purchase-save-state.idle{visibility:hidden}
+.admin-card:has(.purchase-title) .purchase-input-cell:focus-within .purchase-save-state.idle{visibility:visible}
+.admin-card:has(.purchase-title) .price-input,.admin-card:has(.purchase-title) .qty-input{width:100%;max-width:110px;font-variant-numeric:tabular-nums}
+.admin-card:has(.purchase-title) .purchase-price-warning{display:block;min-height:18px;line-height:18px}
