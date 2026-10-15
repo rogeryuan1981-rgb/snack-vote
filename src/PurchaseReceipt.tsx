@@ -95,12 +95,14 @@ export function PurchaseReceipt({ campaignId, expectedDate, editable = false, on
         {editable && receipt && <div className="receipt-editor"><label>到貨狀態<select aria-label="到貨狀態" value={status} disabled={busy} onChange={e => setStatus(e.target.value as Status)}><option value="pending">待到貨</option><option value="partial">部分到貨</option><option value="arrived">全部到貨</option></select></label><label>{status === "partial" ? "最近一批到貨日期" : "實際到貨日期"}<input type="date" value={date} disabled={busy || status === "pending"} onChange={e => setDate(e.target.value)}/></label><button type="button" disabled={busy} onClick={() => void run(save)}>{busy ? "處理中…" : "儲存到貨狀態"}</button></div>}
         {(["overview", "item"] as ReceiptPhotoKind[]).map(kind => {
             const group = photos.filter(photo => photo.kind === kind);
+            if (!editable && !group.length) return null;
             const label = receiptPhotoLabels[kind];
-            return <div className="receipt-evidence" key={kind}><strong>{label}驗收照片（{group.length}／{receiptPhotoLimits[kind]} 張）</strong><p>{kind === "overview" ? "放在核銷 PDF 第一頁。" : "上傳後放在核銷 PDF 第二頁；未上傳則不增加第二頁。"}</p>
+            return <div className="receipt-evidence" key={kind}><strong>{label}驗收照片{editable && <>（{group.length}／{receiptPhotoLimits[kind]} 張）</>}</strong>{editable && <p>{kind === "overview" ? "放在核銷 PDF 第一頁。" : "上傳後放在核銷 PDF 第二頁；未上傳則不增加第二頁。"}</p>}
             {editable && <label className="receipt-upload">上傳{label}照片（最多 {receiptPhotoLimits[kind]} 張，每張上限 10 MB；JPG／PNG／WebP）<input aria-label={"上傳" + label + "照片"} type="file" accept="image/jpeg,image/png,image/webp" multiple={kind === "item"} disabled={busy || !receipt || group.length >= receiptPhotoLimits[kind]} onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ""; void run(() => upload(files, kind)); }}/></label>}
             {group.length ? <div className="receipt-photos">{group.map((photo, index) => <figure key={photo.name}><a href={photo.url} target="_blank" rel="noreferrer"><img src={photo.url} alt={label + "驗收照片 " + (index + 1)} loading="lazy"/></a><figcaption>上傳：{photo.created ? new Date(photo.created).toLocaleDateString("zh-TW") : "日期未記錄"}</figcaption></figure>)}</div> : receipt && !error && <p>尚未上傳{label}驗收照片。</p>}</div>;
         })}
         {error && <p className="receipt-error" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     </section>;
 }
+
 
