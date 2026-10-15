@@ -77,3 +77,15 @@
   .form-grid input,.form-grid select,.form-grid textarea,.search input { font-size:16px; }
   .modal-card { padding:18px; }
 }
+
+/* Keep the frontend/backend switch in each header's account actions. */
+.top-actions > .portal-switch,.admin-status > .portal-switch {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-height:36px; padding:8px 12px; border:1px solid var(--line);
+  border-radius:10px; background:#fff; color:#405d50;
+  font-size:13px; font-weight:900; line-height:1.4;
+  text-decoration:none; white-space:nowrap;
+}
+.portal-switch:hover { background:#eef2ea; }
+.portal-switch:focus-visible { outline:2px solid #173f32; outline-offset:3px; }
+@media(max-width:700px) { .admin-status { margin-left:auto; justify-content:flex-end; } }
