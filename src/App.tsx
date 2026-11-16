@@ -258,6 +258,13 @@ export default function App() {
     const [route, setRoute] = useState(() => location.hash || "#/portal");
     const portalState = usePortalContext(session?.user.id);
     useSharedSession(session?.user.id);
+    const legacyPortalRoute = location.pathname.startsWith("/snack-vote/") &&
+        (route.startsWith("#/portal") || route.startsWith("#/training") || route.startsWith("#/customer-service"));
+    useEffect(() => {
+        if (!legacyPortalRoute)
+            return;
+        location.replace(`https://rogeryuan1981-rgb.github.io/rmbotics-employee-portal/${route}`);
+    }, [legacyPortalRoute, route]);
     useEffect(() => {
         if (!isSupabaseConfigured) {
             setLoading(false);
@@ -333,6 +340,8 @@ export default function App() {
     }, [session?.user.id]);
     if (!isSupabaseConfigured)
         return <SetupScreen />;
+    if (legacyPortalRoute)
+        return <main className="loading-screen">正在前往正式員工入口…</main>;
     if (loading)
         return <main className="loading-screen">正在確認公司名單…</main>;
     if (!session)
