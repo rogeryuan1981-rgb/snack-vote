@@ -350,18 +350,18 @@ export default function App() {
         return <Unauthorized email={session.user.email ?? ""}/>;
     if (portalState.backendMissing) {
         if (route === "#/" || route.startsWith("#/history") || route.startsWith("#/feedback")) return <EmployeeApp employee={employee} route={route}/>;
-        if (route.startsWith("#/admin")) return employee.role === "admin" ? <><a className="portal-switch" href="#/portal" style={{display:"block",padding:12}}>← 返回員工入口</a><AdminApp employee={employee} legacyBackend/></> : <Unauthorized email={employee.email} adminOnly/>;
+        if (route.startsWith("#/admin")) return employee.role === "admin" ? <AdminApp employee={employee} legacyBackend/> : <Unauthorized email={employee.email} adminOnly/>;
         return <PendingPortal name={employee.name}/>;
     }
     if (portalState.error) return <main className="system-card"><p role="alert">{portalState.error}</p><button onClick={() => void supabase.auth.signOut({scope:"local"})}>登出</button></main>;
     if (!portalState.context) return <main className="loading-screen">正在確認系統資格…</main>;
     if (route.startsWith("#/portal") || route.startsWith("#/training") || route.startsWith("#/customer-service")) return <Portal route={route} context={portalState.context}/>;
-    if (!portalState.context.systems.some(s => s.code === "snack-vote")) return <main className="system-card"><p>尚未取得零食投票使用資格。</p><a href="#/portal">返回員工入口</a></main>;
+    if (!portalState.context.systems.some(s => s.code === "snack-vote")) return <main className="system-card"><p>尚未取得零食投票使用資格。</p></main>;
     const snackEmployee:Employee = portalState.context.grants.some(g => g.system_code === "snack-vote" && g.role === "admin") ? {...employee,role:"admin"} : employee;
     const adminRoute = route.startsWith("#/admin");
     if (adminRoute && snackEmployee.role !== "admin")
         return <Unauthorized email={employee.email} adminOnly/>;
-    return adminRoute ? <><a className="portal-switch" href="#/portal" style={{display:"block",padding:12}}>← 返回員工入口</a><AdminApp employee={snackEmployee}/></> : <EmployeeApp employee={snackEmployee} route={route}/>;
+    return adminRoute ? <AdminApp employee={snackEmployee}/> : <EmployeeApp employee={snackEmployee} route={route}/>;
 }
 function SetupScreen() { return <main className="system-card"><p className="section-kicker">連線設定</p><h1>網站程式已準備連接 Supabase</h1><p>請建立 <code>.env.local</code>，填入 Project URL 與 Publishable Key，再重新啟動網站。</p><code>VITE_SUPABASE_URL=...<br />VITE_SUPABASE_PUBLISHABLE_KEY=...</code></main>; }
 function Login() {
@@ -772,7 +772,7 @@ function ShellHeader({ employee, children, currentPage = "campaign" }: {
     employee: Employee;
     children: React.ReactNode;
     currentPage?: "campaign" | "history" | "feedback";
-}) { const shared = getSessionMode() === "shared"; return <main className="employee-shell"><header className="topbar"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><nav className="employee-page-nav" aria-label="主要功能"><a href="#/portal">返回員工入口</a><a href="#/" className={currentPage === "campaign" ? "active" : ""}>本期活動</a><a href="#/history" className={currentPage === "history" ? "active" : ""}>近三期回顧</a><a href="#/feedback" className={currentPage === "feedback" ? "active" : ""}>意見問卷</a></nav><div className="top-actions"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{shared ? "共用電腦模式" : "此瀏覽器已登入"}</span>{employee.role === "admin" && <a className="portal-switch" href="#/admin">管理後台</a>}<button onClick={() => supabase.auth.signOut({ scope: "local" })}>登出</button><div className="profile"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>{employee.email}{shared ? " · 閒置 30 分鐘自動登出" : ""}</small></div></div></div></header>{children}<footer>商品與價格僅供採購參考，實際售價及庫存以門市為準。</footer></main>; }
+}) { const shared = getSessionMode() === "shared"; return <main className="employee-shell"><header className="topbar"><div className="brand"><span className="brand-mark">S</span><div><strong>Snack Vote</strong><small>公司零食共選</small></div></div><nav className="employee-page-nav" aria-label="主要功能"><a href="#/" className={currentPage === "campaign" ? "active" : ""}>本期活動</a><a href="#/history" className={currentPage === "history" ? "active" : ""}>近三期回顧</a><a href="#/feedback" className={currentPage === "feedback" ? "active" : ""}>意見問卷</a></nav><div className="top-actions"><TextSizeControl /><span className={`session-mode ${getSessionMode()}`}>{shared ? "共用電腦模式" : "此瀏覽器已登入"}</span>{employee.role === "admin" && <a className="portal-switch" href="#/admin">管理後台</a>}<button onClick={() => supabase.auth.signOut({ scope: "local" })}>登出</button><div className="profile"><span className="avatar">{employee.name.slice(0, 1)}</span><div><strong>{employee.name}</strong><small>{employee.email}{shared ? " · 閒置 30 分鐘自動登出" : ""}</small></div></div></div></header>{children}<footer>商品與價格僅供採購參考，實際售價及庫存以門市為準。</footer></main>; }
 function Timeline({ campaign, phase }: {
     campaign: Campaign;
     phase: Phase;

@@ -39,11 +39,7 @@ test("uninitialized training database preserves the existing snack portal and ad
     page.getByRole("link", { name: "本期活動", exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "管理後台", exact: true }).click();
-  await expect(
-    page.getByRole("link", { name: "← 返回員工入口", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "← 返回員工入口", exact: true }).click();
-  await expect(page.getByRole("heading", { name: /歡迎回來/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /返回員工入口/ })).toHaveCount(0);
   await page.goto("/#/training");
   await expect(
     page.getByText("尚待管理員完成平台初始化，目前未開放學習與測驗。"),
